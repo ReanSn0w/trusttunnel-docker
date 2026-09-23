@@ -117,6 +117,67 @@ func (m *Manager) Issue(ctx context.Context, mode Mode, email, hostname string) 
 	return next, nil
 }
 
+func (m *Manager) Renew(ctx context.Context) (Metadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, err := m.repo.LoadTLSMetadata(ctx)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if current.Mode == ManualMode {
+		return current, errors.New("ACME renewal is disabled in manual mode")
+	}
+	if err = ValidateIdentity(current.Email, current.Hostname); err != nil {
+		return current, err
+	}
+	next, err := current.Transition(Renewing)
+	if err != nil {
+		return current, err
+	}
+	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
+		return current, err
+	}
+	opCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+	client, err := m.factory(ACMEConfig{Mode: current.Mode, Email: current.Email, DataDir: m.dataDir, RegistrationURI: current.RegistrationURI, Provider: m.provider, Timeout: m.timeout})
+	if err != nil {
+		return m.fail(ctx, next, "renew-client", err)
+	}
+	registrationURI, err := client.EnsureAccount(opCtx)
+	if err != nil {
+		return m.fail(ctx, next, "renew-account", err)
+	}
+	next.RegistrationURI = registrationURI
+	bundle, err := client.Obtain(opCtx, current.Hostname)
+	if err != nil {
+		return m.fail(ctx, next, "renew", err)
+	}
+	validated, err := ValidateBundle(bundle, current.Hostname, current.Mode, m.now())
+	if err != nil {
+		return m.fail(ctx, next, "renew-validate", err)
+	}
+	published, err := m.publisher.Publish(opCtx, bundle)
+	if err != nil {
+		return m.fail(ctx, next, "renew-publish", err)
+	}
+	next.State = Active
+	next.Serial = validated.SerialNumber.String()
+	next.Issuer = validated.Issuer.String()
+	next.SANs = append([]string(nil), validated.DNSNames...)
+	next.NotBefore = validated.NotBefore
+	next.NotAfter = validated.NotAfter
+	next.Fingerprint = fingerprint(validated)
+	next.PreviousRevision = current.ActiveRevision
+	next.ActiveRevision = published.Revision
+	next.LastError = ""
+	next.UpdatedAt = m.now().UTC()
+	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
+		return m.fail(ctx, next, "renew-metadata", err)
+	}
+	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-renew", Action: "sighup", Result: "pending"})
+	return next, nil
+}
+
 func (m *Manager) fail(ctx context.Context, state Metadata, stage string, cause error) (Metadata, error) {
 	state.State = Degraded
 	state.LastError = sanitizeCertificateError(cause)

@@ -78,7 +78,9 @@ func (r *certRepo) SaveTLSMetadata(_ context.Context, m Metadata) error {
 	return nil
 }
 func (r *certRepo) LoadTLSMetadata(context.Context) (Metadata, error) {
-	return Metadata{State: Unconfigured}, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.m, nil
 }
 func (r *certRepo) RecordEvent(_ context.Context, e domain.ApplyEvent) error {
 	r.events = append(r.events, e)
@@ -97,7 +99,7 @@ func (fakePublisher) Publish(context.Context, Bundle) (Published, error) {
 }
 
 func TestManagerIssue(t *testing.T) {
-	repo := &certRepo{}
+	repo := &certRepo{m: Metadata{State: Unconfigured}}
 	bundle := makeBundle(t, "vpn.example.net", "Production CA")
 	m := NewManager(repo, fakePublisher{}, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) { return fakeACME{bundle}, nil })
 	got, err := m.Issue(context.Background(), Production, "admin@example.net", "vpn.example.net")
@@ -105,6 +107,19 @@ func TestManagerIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.State != Active || got.ActiveRevision != "tls-r1" || got.Fingerprint == "" {
+		t.Fatalf("metadata=%#v", got)
+	}
+}
+
+func TestManagerRenew(t *testing.T) {
+	bundle := makeBundle(t, "vpn.example.net", "Production CA")
+	repo := &certRepo{m: Metadata{State: Active, Mode: Production, Email: "admin@example.net", Hostname: "vpn.example.net", RegistrationURI: "account-uri", ActiveRevision: "tls-old"}}
+	m := NewManager(repo, fakePublisher{}, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) { return fakeACME{bundle}, nil })
+	got, err := m.Renew(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != Active || got.PreviousRevision != "tls-old" || got.ActiveRevision != "tls-r1" {
 		t.Fatalf("metadata=%#v", got)
 	}
 }
