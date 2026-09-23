@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/reansnow/trusttunnel-controller/internal/auth"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
@@ -205,6 +206,48 @@ func (s *Store) UpsertUser(ctx context.Context, u domain.VPNUser) error {
 	return err
 }
 
+func (s *Store) ListUsers(ctx context.Context) ([]domain.VPNUser, error) {
+	snap, err := s.Snapshot(ctx)
+	return snap.Users, err
+}
+func (s *Store) UserByID(ctx context.Context, id int64) (domain.VPNUser, error) {
+	var u domain.VPNUser
+	var created, updated string
+	err := s.db.QueryRowContext(ctx, "SELECT id,username,credential,status,created_at,updated_at FROM vpn_users WHERE id=?", id).Scan(&u.ID, &u.Username, &u.Credential, &u.Status, &created, &updated)
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	u.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return u, err
+}
+func (s *Store) InsertUser(ctx context.Context, u domain.VPNUser) (int64, error) {
+	if u.Status != domain.UserActive {
+		return 0, errors.New("new user must be active")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, "INSERT INTO vpn_users(username,credential,status,created_at,updated_at) VALUES(?,?,?,?,?)", u.Username, u.Credential, u.Status, now, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+func (s *Store) UpdateUser(ctx context.Context, u domain.VPNUser) error {
+	if u.Status != domain.UserActive && u.Status != domain.UserDisabled && u.Status != domain.UserRevoked {
+		return errors.New("invalid user status")
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE vpn_users SET username=?,credential=?,status=?,updated_at=? WHERE id=?", u.Username, u.Credential, u.Status, time.Now().UTC().Format(time.RFC3339Nano), u.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err == nil && n != 1 {
+		return sql.ErrNoRows
+	}
+	return err
+}
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM vpn_users WHERE id=?", id)
+	return err
+}
+
 func (s *Store) RecordEvent(ctx context.Context, e domain.ApplyEvent) error {
 	if len(e.Error) > 2048 {
 		e.Error = e.Error[:2048]
@@ -212,6 +255,36 @@ func (s *Store) RecordEvent(ctx context.Context, e domain.ApplyEvent) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO apply_events(revision,kind,action,result,error,created_at)
         VALUES(?,?,?,?,?,?)`, e.Revision, e.Kind, e.Action, e.Result, e.Error, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
+}
+
+func (s *Store) ListApplyEvents(ctx context.Context, before int64, limit int) ([]domain.ApplyEvent, error) {
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("event limit must be between 1 and 100")
+	}
+	query := "SELECT id,revision,kind,action,result,error,created_at FROM apply_events"
+	args := []any{}
+	if before > 0 {
+		query += " WHERE id<?"
+		args = append(args, before)
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]domain.ApplyEvent, 0, limit)
+	for rows.Next() {
+		var e domain.ApplyEvent
+		var at string
+		if err = rows.Scan(&e.ID, &e.Revision, &e.Kind, &e.Action, &e.Result, &e.Error, &at); err != nil {
+			return nil, err
+		}
+		e.At = parseTime(at)
+		events = append(events, e)
+	}
+	return events, rows.Err()
 }
 
 func (s *Store) ActiveRevision(ctx context.Context) (string, error) {
@@ -225,10 +298,84 @@ func (s *Store) SetActiveRevision(ctx context.Context, revision string) error {
 	return err
 }
 
+func (s *Store) SetHostname(ctx context.Context, hostname string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE settings SET hostname=?,updated_at=? WHERE id=1", hostname, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var version int
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version)
 	return version, err
+}
+
+func (s *Store) HasAdmin(ctx context.Context) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM admins").Scan(&count)
+	return count > 0, err
+}
+
+func (s *Store) CreateFirstAdmin(ctx context.Context, username, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var count int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM admins").Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return auth.ErrAlreadyBootstrapped
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, "INSERT INTO admins(id,username,password_hash,created_at,updated_at) VALUES(1,?,?,?,?)", username, passwordHash, now, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) AdminByUsername(ctx context.Context, username string) (auth.Admin, error) {
+	var a auth.Admin
+	err := s.db.QueryRowContext(ctx, "SELECT id,username,password_hash FROM admins WHERE username=?", username).Scan(&a.ID, &a.Username, &a.PasswordHash)
+	return a, err
+}
+func (s *Store) AdminByID(ctx context.Context, id int64) (auth.Admin, error) {
+	var a auth.Admin
+	err := s.db.QueryRowContext(ctx, "SELECT id,username,password_hash FROM admins WHERE id=?", id).Scan(&a.ID, &a.Username, &a.PasswordHash)
+	return a, err
+}
+func (s *Store) CreateSession(ctx context.Context, hash []byte, adminID int64, expires time.Time) error {
+	_, err := s.db.ExecContext(ctx, "INSERT INTO sessions(token_hash,admin_id,expires_at,created_at) VALUES(?,?,?,?)", hash, adminID, expires.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+func (s *Store) SessionAdmin(ctx context.Context, hash []byte, now time.Time) (auth.Admin, error) {
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at<=?", now.UTC().Format(time.RFC3339Nano))
+	var a auth.Admin
+	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.username,a.password_hash FROM sessions s JOIN admins a ON a.id=s.admin_id WHERE s.token_hash=? AND s.expires_at>?`, hash, now.UTC().Format(time.RFC3339Nano)).Scan(&a.ID, &a.Username, &a.PasswordHash)
+	return a, err
+}
+func (s *Store) DeleteSession(ctx context.Context, hash []byte) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash=?", hash)
+	return err
+}
+func (s *Store) UpdateAdminPassword(ctx context.Context, adminID int64, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "UPDATE admins SET password_hash=?,updated_at=? WHERE id=?", passwordHash, time.Now().UTC().Format(time.RFC3339Nano), adminID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE admin_id=?", adminID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Store) DeleteAdmin(ctx context.Context, adminID int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM admins WHERE id=?", adminID)
+	return err
 }
 
 func (s *Store) SaveACMEAccount(ctx context.Context, directoryURL, email, registrationURI, status, lastError string) error {

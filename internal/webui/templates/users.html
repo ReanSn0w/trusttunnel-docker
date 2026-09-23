@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{.CSRFToken}}"><title>VPN users · TrustTunnel</title><link rel="stylesheet" href="/assets/v1/vendor/bootstrap.min.css"><link rel="stylesheet" href="/assets/v1/app.css"><script defer src="/assets/v1/vendor/htmx.min.js"></script><script defer src="/assets/v1/app.js"></script></head>
+<body><main class="container py-4 tt-shell"><a href="/">← Dashboard</a><h1 class="mt-3">VPN users</h1>
+{{if .Error}}<div class="alert alert-danger">{{.Error}}</div>{{end}}
+{{if .NewPassword}}<div class="alert alert-warning"><strong>Copy the new password for {{.NewUsername}} now.</strong><div class="tt-secret">{{.NewPassword}}</div>It will not be shown again.</div>{{end}}
+<form class="row g-2 mb-4" method="post" action="/users"><input type="hidden" name="_csrf" value="{{.CSRFToken}}"><div class="col"><input class="form-control" name="username" placeholder="Username" maxlength="64" required></div><div class="col-auto"><button class="btn btn-primary" type="submit">Create user</button></div></form>
+<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Username</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+{{range .Users}}<tr><td>{{.Username}}</td><td><span class="badge text-bg-secondary">{{.Status}}</span></td><td class="d-flex flex-wrap gap-2">
+{{if eq .Status "active"}}
+<form method="post" action="/users/{{.ID}}/client/deeplink" target="_blank"><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-primary">Deeplink</button></form>
+<form method="post" action="/users/{{.ID}}/client/toml"><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-primary">TOML</button></form>
+<form method="post" action="/users/{{.ID}}/client/qr" target="_blank"><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-primary">QR</button></form>
+<form method="post" action="/users/{{.ID}}/disable"><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-secondary">Disable</button></form>
+<form method="post" action="/users/{{.ID}}/rotate" data-confirm="Rotate credentials? Existing clients will stop working."><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-warning">Rotate</button></form>
+{{else if eq .Status "disabled"}}<form method="post" action="/users/{{.ID}}/enable"><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-success">Enable</button></form>{{end}}
+{{if ne .Status "revoked"}}<form method="post" action="/users/{{.ID}}/revoke" data-confirm="Permanently revoke this user? This cannot be undone."><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="btn btn-sm btn-outline-danger">Revoke</button></form>{{end}}
+</td></tr>{{else}}<tr><td colspan="3">No users yet.</td></tr>{{end}}
+</tbody></table></div></main></body></html>

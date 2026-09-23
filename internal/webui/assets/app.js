@@ -1,0 +1,1 @@
+document.addEventListener("htmx:configRequest",function(e){const m=document.querySelector('meta[name="csrf-token"]');if(m)e.detail.headers["X-CSRF-Token"]=m.content});document.addEventListener("submit",function(e){const m=e.target.dataset.confirm;if(m&&!window.confirm(m))e.preventDefault()});
