@@ -1,0 +1,7 @@
+.git
+.env
+.env.*
+plans
+docs
+Dockerfile.prebuilt
+docker-entrypoint.sh
