@@ -1,0 +1,39 @@
+# Минимальный вариант на основе официального Compose:
+# https://github.com/TrustTunnel/TrustTunnel/blob/master/docker-compose.yml
+# Скопируйте .env.example в .env, подставьте свои значения и не публикуйте .env.
+
+services:
+  trusttunnel-endpoint:
+    # Официальный prebuilt Dockerfile скачает готовый TrustTunnel v1.1.0.
+    build:
+      context: .
+      dockerfile: Dockerfile.prebuilt
+      args:
+        TT_VERSION: "1.1.0"
+    restart: unless-stopped
+
+    ports:
+      # HTTPS (протоколы HTTP/1.1 и HTTP/2).
+      - "443:8443/tcp"
+      # QUIC / HTTP/3.
+      - "443:8443/udp"
+      # Let's Encrypt проверяет домен через HTTP-01 challenge.
+      - "80:80/tcp"
+
+    environment:
+      TT_LISTEN_ADDRESS: "0.0.0.0:8443"
+      # Публичный DNS-домен, который указывает на сервер.
+      TT_HOSTNAME: "${TT_HOSTNAME:?Set TT_HOSTNAME in .env}"
+      # Логин и сильный пароль в формате username:password.
+      TT_CREDENTIALS: "${TT_CREDENTIALS:?Set TT_CREDENTIALS in .env}"
+      TT_CERT_TYPE: "letsencrypt"
+      # Email для уведомлений Let's Encrypt о сертификате.
+      TT_ACME_EMAIL: "${TT_ACME_EMAIL:?Set TT_ACME_EMAIL in .env}"
+
+    volumes:
+      # Хранит конфиги, credentials и TLS-сертификат между пересозданиями контейнера.
+      - trusttunnel_endpoint_data:/trusttunnel_endpoint
+
+volumes:
+  trusttunnel_endpoint_data:
+    driver: local
