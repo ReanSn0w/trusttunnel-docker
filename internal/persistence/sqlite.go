@@ -181,6 +181,17 @@ func (s *Store) RecordEvent(ctx context.Context, e domain.ApplyEvent) error {
 	return err
 }
 
+func (s *Store) ActiveRevision(ctx context.Context) (string, error) {
+	var revision string
+	err := s.db.QueryRowContext(ctx, "SELECT active_revision FROM settings WHERE id=1").Scan(&revision)
+	return revision, err
+}
+
+func (s *Store) SetActiveRevision(ctx context.Context, revision string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE settings SET active_revision=?, updated_at=? WHERE id=1", revision, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var version int
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version)
