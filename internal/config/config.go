@@ -79,19 +79,19 @@ func Render(s domain.Snapshot) (Files, error) {
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
 	q := func(v string) string { return strconv.Quote(v) }
 	var vpn, hosts, credentials, ruleFile bytes.Buffer
-	fmt.Fprintf(&vpn, "listen_address = %s\nmetrics_address = %s\n", q(s.ListenAddress), q("127.0.0.1:9090"))
-	fmt.Fprintf(&hosts, "[[hosts]]\nhostname = %s\n", q(s.Hostname))
+	fmt.Fprintf(&vpn, "listen_address = %s\ncredentials_file = %s\nrules_file = %s\n\n[listen_protocols]\nhttp1 = {}\nhttp2 = {}\nquic = {}\n\n[forward_protocol]\ndirect = {}\n\n[metrics]\naddress = %s\nper_client_metrics = false\n", q(s.ListenAddress), q("credentials.toml"), q("rules.toml"), q("127.0.0.1:9090"))
+	fmt.Fprintf(&hosts, "[[main_hosts]]\nhostname = %s\n", q(s.Hostname))
 	if s.TLSCertificatePath != "" {
-		fmt.Fprintf(&hosts, "certificate = %s\nprivate_key = %s\n", q(s.TLSCertificatePath), q(s.TLSPrivateKeyPath))
+		fmt.Fprintf(&hosts, "cert_chain_path = %s\nprivate_key_path = %s\n", q(s.TLSCertificatePath), q(s.TLSPrivateKeyPath))
 	}
 	for _, u := range users {
-		if u.Status == domain.UserRevoked {
+		if u.Status != domain.UserActive {
 			continue
 		}
-		fmt.Fprintf(&credentials, "[[users]]\nusername = %s\npassword = %s\nenabled = %t\n", q(u.Username), q(u.Credential), u.Status == domain.UserActive)
+		fmt.Fprintf(&credentials, "[[client]]\nusername = %s\npassword = %s\n", q(u.Username), q(u.Credential))
 	}
 	for _, r := range rules {
-		fmt.Fprintf(&ruleFile, "[[rules]]\nname = %s\naction = %s\nnetwork = %s\n", q(r.Name), q(r.Action), q(r.Network))
+		fmt.Fprintf(&ruleFile, "# %s\n[[rule]]\ncidr = %s\naction = %s\n", r.Name, q(r.Network), q(r.Action))
 	}
 	return Files{"vpn.toml": vpn.Bytes(), "hosts.toml": hosts.Bytes(), "credentials.toml": credentials.Bytes(), "rules.toml": ruleFile.Bytes()}, nil
 }

@@ -14,6 +14,14 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     -ldflags="-s -w -X main.version=$CONTROLLER_VERSION -X main.commit=$VCS_REF" \
     -o /out/trusttunnel-controller ./cmd/trusttunnel-controller
 
+FROM --platform=$TARGETPLATFORM golang:1.26.0-bookworm AS test
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build go test ./...
+
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS endpoint-fetch
 ARG TARGETARCH
 ARG TT_VERSION=1.1.0

@@ -14,9 +14,11 @@ import (
 )
 
 type Materializer struct {
-	root     string
-	mu       sync.Mutex
-	validate func(string) error
+	root         string
+	mu           sync.Mutex
+	validate     func(string) error
+	writeFile    func(string, []byte, fs.FileMode) error
+	beforeRename func() error
 }
 
 func NewMaterializer(root string, validate func(string) error) (*Materializer, error) {
@@ -29,7 +31,7 @@ func NewMaterializer(root string, validate func(string) error) (*Materializer, e
 	if err := os.MkdirAll(filepath.Join(root, "revisions"), 0o700); err != nil {
 		return nil, err
 	}
-	return &Materializer{root: root, validate: validate}, nil
+	return &Materializer{root: root, validate: validate, writeFile: writeSynced, beforeRename: func() error { return nil }}, nil
 }
 
 func revisionID(files Files) string {
@@ -79,7 +81,7 @@ func (m *Materializer) Apply(files Files) (string, error) {
 			if name == "credentials.toml" {
 				mode = 0o600
 			}
-			if err = writeSynced(filepath.Join(stage, name), data, mode); err != nil {
+			if err = m.writeFile(filepath.Join(stage, name), data, mode); err != nil {
 				return "", err
 			}
 		}
@@ -88,6 +90,9 @@ func (m *Materializer) Apply(files Files) (string, error) {
 		}
 		if err = m.validate(stage); err != nil {
 			return "", fmt.Errorf("validate staged revision: %w", err)
+		}
+		if err = m.beforeRename(); err != nil {
+			return "", fmt.Errorf("before publish: %w", err)
 		}
 		if err = os.Rename(stage, destination); err != nil {
 			return "", err

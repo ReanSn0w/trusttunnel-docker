@@ -26,7 +26,7 @@ func TestEndpointHelper(t *testing.T) {
 
 func TestExportBothOfficialFormats(t *testing.T) {
 	t.Setenv("TT_CLI_HELPER", "1")
-	c, err := New(os.Args[0], "vpn.toml", "hosts.toml", time.Second, 1024, 1)
+	c, err := New(os.Args[0], "vpn.toml", "hosts.toml", 10*time.Second, 1024, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

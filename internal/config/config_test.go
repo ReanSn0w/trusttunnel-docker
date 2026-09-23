@@ -35,7 +35,7 @@ func TestRenderDeterministicAndEscaped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(c["credentials.toml"], []byte("\n[[hosts]]")) {
+	if bytes.Contains(c["credentials.toml"], []byte("\n[[main_hosts]]")) {
 		t.Fatal("TOML injection was not escaped")
 	}
 }

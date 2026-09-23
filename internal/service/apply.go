@@ -3,11 +3,25 @@ package service
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/reansnow/trusttunnel-controller/internal/config"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
+
+func ClassifyChange(before, after domain.Snapshot) string {
+	if reflect.DeepEqual(before, after) {
+		return "none"
+	}
+	baseBefore, baseAfter := before, after
+	baseBefore.TLSCertificatePath, baseBefore.TLSPrivateKeyPath = "", ""
+	baseAfter.TLSCertificatePath, baseAfter.TLSPrivateKeyPath = "", ""
+	if reflect.DeepEqual(baseBefore, baseAfter) {
+		return "sighup"
+	}
+	return "restart"
+}
 
 type RevisionStore interface {
 	ActiveRevision(context.Context) (string, error)

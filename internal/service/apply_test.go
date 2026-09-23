@@ -45,3 +45,21 @@ func TestApplyRollsBackFilesAndDatabase(t *testing.T) {
 		t.Fatalf("missing rollback event: %#v", repo.events)
 	}
 }
+
+func TestClassifyChange(t *testing.T) {
+	base := domain.Snapshot{Hostname: "vpn.example.com", ListenAddress: "0.0.0.0:8443"}
+	if got := ClassifyChange(base, base); got != "none" {
+		t.Fatalf("same=%s", got)
+	}
+	tls := base
+	tls.TLSCertificatePath = "/tls/cert.pem"
+	tls.TLSPrivateKeyPath = "/tls/key.pem"
+	if got := ClassifyChange(base, tls); got != "sighup" {
+		t.Fatalf("tls=%s", got)
+	}
+	changed := base
+	changed.ListenAddress = "0.0.0.0:9443"
+	if got := ClassifyChange(base, changed); got != "restart" {
+		t.Fatalf("listen=%s", got)
+	}
+}

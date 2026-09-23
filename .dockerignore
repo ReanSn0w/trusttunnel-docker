@@ -3,6 +3,5 @@
 .env.*
 plans
 docs
-**/*_test.go
 Dockerfile.prebuilt
 docker-entrypoint.sh

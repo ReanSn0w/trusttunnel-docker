@@ -56,3 +56,26 @@ func TestMaterializerDoesNotPublishInvalidStage(t *testing.T) {
 		t.Fatal("invalid revision became active")
 	}
 }
+
+func TestMaterializerDiskFullAndCrashBeforeRename(t *testing.T) {
+	for name, inject := range map[string]func(*Materializer){
+		"disk-full": func(m *Materializer) {
+			m.writeFile = func(string, []byte, os.FileMode) error { return errors.New("no space left on device") }
+		},
+		"crash-before-rename": func(m *Materializer) { m.beforeRename = func() error { return errors.New("injected crash") } },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, err := NewMaterializer(t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inject(m)
+			if _, err = m.Apply(Files{"vpn.toml": []byte("safe")}); err == nil {
+				t.Fatal("expected injected error")
+			}
+			if _, err = m.ActiveDir(); err == nil {
+				t.Fatal("partial revision became active")
+			}
+		})
+	}
+}
