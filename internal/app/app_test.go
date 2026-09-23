@@ -31,6 +31,8 @@ func TestRunStartsAndStopsUIAndProbeListeners(t *testing.T) {
 	select {
 	case <-logger.started:
 		cancel()
+	case err := <-done:
+		t.Fatalf("controller exited before start: %v", err)
 	case <-time.After(15 * time.Second):
 		t.Fatal("controller did not start")
 	}

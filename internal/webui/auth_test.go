@@ -26,6 +26,12 @@ func (s *webSessionStub) Authenticate(context.Context, string) (auth.Admin, erro
 	return auth.Admin{}, errors.New("not used")
 }
 func (s *webSessionStub) Logout(context.Context, string) error { s.loggedOut = true; return nil }
+func (s *webSessionStub) ChangePassword(_ context.Context, _ string, current, _ string) (auth.Session, error) {
+	if current != "Correct-Horse-9!" {
+		return auth.Session{}, auth.ErrInvalidCredentials
+	}
+	return auth.Session{Token: "rotated-session", ExpiresAt: time.Now().Add(time.Hour), Admin: auth.Admin{ID: 1, Username: "admin"}}, nil
+}
 func TestLoginCookieUniformErrorAndNoOpenRedirect(t *testing.T) {
 	svc := &webSessionStub{}
 	h, err := NewAuthHandler(svc, nil, nil, true)
@@ -85,5 +91,18 @@ func TestLogoutRevokesSessionAndClearsCookie(t *testing.T) {
 	cookie := w.Result().Cookies()[0]
 	if cookie.MaxAge != -1 || !cookie.Secure || !cookie.HttpOnly {
 		t.Fatalf("cookie=%#v", cookie)
+	}
+}
+
+func TestPasswordRotationSetsNewSession(t *testing.T) {
+	h, _ := NewAuthHandler(&webSessionStub{}, nil, nil, true)
+	r := httptest.NewRequest(http.MethodPost, "/account/password", strings.NewReader("current_password=Correct-Horse-9%21&new_password=New-Correct-Horse-8%21"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: "old-session"})
+	w := httptest.NewRecorder()
+	h.ChangePassword(w, r)
+	cookies := w.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Value != "rotated-session" || !strings.Contains(w.Body.String(), "all other sessions were revoked") {
+		t.Fatalf("cookies=%#v body=%s", cookies, w.Body.String())
 	}
 }

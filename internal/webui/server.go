@@ -24,6 +24,8 @@ func NewRouter(d RouterDependencies) http.Handler {
 	protected("GET /{$}", d.Dashboard)
 	protected("GET /fragments/status", d.Dashboard)
 	protected("POST /logout", http.HandlerFunc(d.Auth.Logout))
+	protected("GET /account", http.HandlerFunc(d.Auth.Account))
+	protected("POST /account/password", http.HandlerFunc(d.Auth.ChangePassword))
 	protected("GET /users", http.HandlerFunc(d.Users.List))
 	protected("POST /users", http.HandlerFunc(d.Users.Create))
 	protected("POST /users/{id}/enable", http.HandlerFunc(d.Users.Enable))
