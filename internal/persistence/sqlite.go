@@ -16,7 +16,7 @@ import (
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var migrations = []string{`
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS tls_certificate (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tls_certificate_expiry_idx ON tls_certificate(not_after);
+`, `
+ALTER TABLE tls_certificate ADD COLUMN certificate_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE tls_certificate ADD COLUMN private_key_path TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    action TEXT NOT NULL CHECK (action IN ('allow','deny')),
+    network TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 `}
 
 type Store struct{ db *sql.DB }
@@ -173,8 +183,8 @@ func (s *Store) bootstrap(ctx context.Context) error {
 
 func (s *Store) Snapshot(ctx context.Context) (domain.Snapshot, error) {
 	var snap domain.Snapshot
-	if err := s.db.QueryRowContext(ctx, `SELECT active_revision, hostname, listen_address FROM settings WHERE id=1`).
-		Scan(&snap.Revision, &snap.Hostname, &snap.ListenAddress); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT s.active_revision,s.hostname,s.listen_address,coalesce(t.certificate_path,''),coalesce(t.private_key_path,'') FROM settings s LEFT JOIN tls_certificate t ON t.id=1 WHERE s.id=1`).
+		Scan(&snap.Revision, &snap.Hostname, &snap.ListenAddress, &snap.TLSCertificatePath, &snap.TLSPrivateKeyPath); err != nil {
 		return snap, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, username, credential, status, created_at, updated_at FROM vpn_users ORDER BY username`)
@@ -192,7 +202,22 @@ func (s *Store) Snapshot(ctx context.Context) (domain.Snapshot, error) {
 		u.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		snap.Users = append(snap.Users, u)
 	}
-	return snap, rows.Err()
+	if err = rows.Err(); err != nil {
+		return snap, err
+	}
+	ruleRows, err := s.db.QueryContext(ctx, "SELECT name,action,network FROM rules ORDER BY name")
+	if err != nil {
+		return snap, err
+	}
+	defer ruleRows.Close()
+	for ruleRows.Next() {
+		var rule domain.Rule
+		if err = ruleRows.Scan(&rule.Name, &rule.Action, &rule.Network); err != nil {
+			return snap, err
+		}
+		snap.Rules = append(snap.Rules, rule)
+	}
+	return snap, ruleRows.Err()
 }
 
 func (s *Store) UpsertUser(ctx context.Context, u domain.VPNUser) error {
@@ -303,6 +328,15 @@ func (s *Store) SetHostname(ctx context.Context, hostname string) error {
 	return err
 }
 
+func (s *Store) SetListenAddress(ctx context.Context, address string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE settings SET listen_address=?,updated_at=? WHERE id=1", address, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+func (s *Store) UpsertRule(ctx context.Context, r domain.Rule) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO rules(name,action,network,updated_at) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET action=excluded.action,network=excluded.network,updated_at=excluded.updated_at`, r.Name, r.Action, r.Network, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var version int
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version)
@@ -387,15 +421,15 @@ func (s *Store) SaveACMEAccount(ctx context.Context, directoryURL, email, regist
 }
 
 func (s *Store) SaveTLSMetadata(ctx context.Context, m certificate.Metadata) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tls_certificate(id,state,mode,hostname,email,directory_url,registration_uri,serial,issuer,sans,not_before,not_after,fingerprint,active_revision,previous_revision,last_error,updated_at)
-        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,mode=excluded.mode,hostname=excluded.hostname,email=excluded.email,directory_url=excluded.directory_url,registration_uri=excluded.registration_uri,serial=excluded.serial,issuer=excluded.issuer,sans=excluded.sans,not_before=excluded.not_before,not_after=excluded.not_after,fingerprint=excluded.fingerprint,active_revision=excluded.active_revision,previous_revision=excluded.previous_revision,last_error=excluded.last_error,updated_at=excluded.updated_at`, m.State, m.Mode, m.Hostname, m.Email, m.DirectoryURL, m.RegistrationURI, m.Serial, m.Issuer, strings.Join(m.SANs, "\n"), formatTime(m.NotBefore), formatTime(m.NotAfter), m.Fingerprint, m.ActiveRevision, m.PreviousRevision, m.LastError, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tls_certificate(id,state,mode,hostname,email,directory_url,registration_uri,serial,issuer,sans,not_before,not_after,fingerprint,active_revision,previous_revision,last_error,updated_at,certificate_path,private_key_path)
+        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,mode=excluded.mode,hostname=excluded.hostname,email=excluded.email,directory_url=excluded.directory_url,registration_uri=excluded.registration_uri,serial=excluded.serial,issuer=excluded.issuer,sans=excluded.sans,not_before=excluded.not_before,not_after=excluded.not_after,fingerprint=excluded.fingerprint,active_revision=excluded.active_revision,previous_revision=excluded.previous_revision,last_error=excluded.last_error,updated_at=excluded.updated_at,certificate_path=excluded.certificate_path,private_key_path=excluded.private_key_path`, m.State, m.Mode, m.Hostname, m.Email, m.DirectoryURL, m.RegistrationURI, m.Serial, m.Issuer, strings.Join(m.SANs, "\n"), formatTime(m.NotBefore), formatTime(m.NotAfter), m.Fingerprint, m.ActiveRevision, m.PreviousRevision, m.LastError, time.Now().UTC().Format(time.RFC3339Nano), m.CertificatePath, m.PrivateKeyPath)
 	return err
 }
 
 func (s *Store) LoadTLSMetadata(ctx context.Context) (certificate.Metadata, error) {
 	var m certificate.Metadata
 	var sans, notBefore, notAfter, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT state,mode,hostname,email,directory_url,registration_uri,serial,issuer,sans,not_before,not_after,fingerprint,active_revision,previous_revision,last_error,updated_at FROM tls_certificate WHERE id=1`).Scan(&m.State, &m.Mode, &m.Hostname, &m.Email, &m.DirectoryURL, &m.RegistrationURI, &m.Serial, &m.Issuer, &sans, &notBefore, &notAfter, &m.Fingerprint, &m.ActiveRevision, &m.PreviousRevision, &m.LastError, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT state,mode,hostname,email,directory_url,registration_uri,serial,issuer,sans,not_before,not_after,fingerprint,active_revision,previous_revision,last_error,updated_at,certificate_path,private_key_path FROM tls_certificate WHERE id=1`).Scan(&m.State, &m.Mode, &m.Hostname, &m.Email, &m.DirectoryURL, &m.RegistrationURI, &m.Serial, &m.Issuer, &sans, &notBefore, &notAfter, &m.Fingerprint, &m.ActiveRevision, &m.PreviousRevision, &m.LastError, &updated, &m.CertificatePath, &m.PrivateKeyPath)
 	if err != nil {
 		return m, err
 	}

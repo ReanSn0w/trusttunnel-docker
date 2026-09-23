@@ -109,6 +109,7 @@ func (m *Manager) Issue(ctx context.Context, mode Mode, email, hostname string) 
 	next.Fingerprint = fingerprint(validated)
 	next.PreviousRevision = current.ActiveRevision
 	next.ActiveRevision = published.Revision
+	next.CertificatePath, next.PrivateKeyPath = published.CertificatePath, published.PrivateKeyPath
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
@@ -170,6 +171,7 @@ func (m *Manager) Renew(ctx context.Context) (Metadata, error) {
 	next.Fingerprint = fingerprint(validated)
 	next.PreviousRevision = current.ActiveRevision
 	next.ActiveRevision = published.Revision
+	next.CertificatePath, next.PrivateKeyPath = published.CertificatePath, published.PrivateKeyPath
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
@@ -209,6 +211,7 @@ func (m *Manager) ImportManual(ctx context.Context, hostname string, chain, priv
 	next.Fingerprint = fingerprint(validated)
 	next.PreviousRevision = current.ActiveRevision
 	next.ActiveRevision = published.Revision
+	next.CertificatePath, next.PrivateKeyPath = published.CertificatePath, published.PrivateKeyPath
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {

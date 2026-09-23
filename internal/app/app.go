@@ -14,6 +14,7 @@ import (
 	"github.com/reansnow/trusttunnel-controller/internal/auth"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/config"
+	"github.com/reansnow/trusttunnel-controller/internal/datalock"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 	"github.com/reansnow/trusttunnel-controller/internal/endpointcli"
 	"github.com/reansnow/trusttunnel-controller/internal/logbuffer"
@@ -35,6 +36,7 @@ type Config struct {
 	Version, Commit                                                                           string
 	TrustedProxies                                                                            []string
 	ExternalTLS                                                                               bool
+	ACMEDefaultMode                                                                           certificate.Mode
 }
 
 func (c Config) Validate() error {
@@ -63,6 +65,11 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
+	dataLock, err := datalock.Acquire(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer dataLock.Close()
 	store, err := persistence.Open(ctx, filepath.Join(cfg.DataDir, "controller.db"))
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)
@@ -99,7 +106,7 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	tlsCoordinator := service.NewTLSCoordinator(store, tlsStore, materializer, readyProc, nil)
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
-	tlsSettings := service.NewTLSSettingsService(store, certificateManager)
+	tlsSettings := service.NewTLSSettingsServiceWithMode(store, certificateManager, cfg.ACMEDefaultMode)
 	renewal := certificate.NewScheduler(store, certificateManager.Renew, cfg.RenewalLead)
 	if err = renewal.Start(ctx); err != nil {
 		return err

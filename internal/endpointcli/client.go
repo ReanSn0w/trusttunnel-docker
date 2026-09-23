@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ func (c *Client) run(parent context.Context, username, address, format string) (
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.binary, c.vpnConfig, c.hostsConfig, "-c", username, "-a", address, "--format", format)
+	cmd.Dir = filepath.Dir(c.vpnConfig)
 	out, stderr := &limitBuffer{max: c.maxOutput}, &limitBuffer{max: 4096}
 	cmd.Stdout, cmd.Stderr = out, stderr
 	err := cmd.Run()

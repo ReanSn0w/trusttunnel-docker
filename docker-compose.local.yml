@@ -1,10 +1,29 @@
-# Локальный smoke-test: self-signed TLS, без ACME и без публичных портов.
-# Используйте только вместе с docker-compose.yml.
+# Безопасный local smoke: все опубликованные порты только на loopback.
+# Используйте вместе с docker-compose.yml.
 services:
-  trusttunnel-endpoint:
+  trusttunnel:
+    image: trusttunnel-controller:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CONTROLLER_VERSION: local
+        VCS_REF: local
+    restart: "no"
     ports: !override
-      - "127.0.0.1:8443:8443/tcp"
-      - "127.0.0.1:8443:8443/udp"
+      # VPN TCP/UDP на свободном высоком порту.
+      - "127.0.0.1:18443:8443/tcp"
+      - "127.0.0.1:18443:8443/udp"
+      # Admin UI только на loopback.
+      - "127.0.0.1:18080:8080/tcp"
     environment:
-      TT_CERT_TYPE: "self-signed"
-      TT_ACME_EMAIL: ""
+      TT_UI_LISTEN: "0.0.0.0:8080"
+      TT_PROBE_LISTEN: "127.0.0.1:8081"
+      TT_ACME_DEFAULT_MODE: "staging"
+    volumes: !override
+      # Отдельные local-данные никогда не мигрируют production volume.
+      - trusttunnel_local_data:/var/lib/trusttunnel
+
+volumes:
+  trusttunnel_local_data:
+    driver: local

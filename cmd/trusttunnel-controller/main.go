@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +14,9 @@ import (
 	flags "github.com/jessevdk/go-flags"
 
 	"github.com/reansnow/trusttunnel-controller/internal/app"
+	"github.com/reansnow/trusttunnel-controller/internal/backup"
+	"github.com/reansnow/trusttunnel-controller/internal/certificate"
+	"github.com/reansnow/trusttunnel-controller/internal/migration"
 )
 
 var (
@@ -37,6 +41,13 @@ type options struct {
 	LogFormat       string        `long:"log-format" env:"TT_LOG_FORMAT" choice:"json" choice:"text" default:"json" description:"Log encoding"`
 	LogLevel        string        `long:"log-level" env:"TT_LOG_LEVEL" default:"info" description:"Log severity"`
 	ShowVersion     bool          `long:"version" description:"Print version and exit"`
+	MigrateLegacy   string        `long:"migrate-legacy" env:"TT_MIGRATE_LEGACY" description:"Import an absolute legacy volume path and exit"`
+	Healthcheck     bool          `long:"healthcheck" description:"Check the local health endpoint and exit"`
+	Readycheck      bool          `long:"readycheck" description:"Check the local readiness endpoint and exit"`
+	ACMEDefaultMode string        `long:"acme-default-mode" env:"TT_ACME_DEFAULT_MODE" choice:"production" choice:"staging" default:"production" description:"Default ACME mode before first configuration"`
+	BackupPath      string        `long:"backup" description:"Create a verified backup archive at an absolute path and exit"`
+	VerifyBackup    string        `long:"verify-backup" description:"Verify a backup archive and exit"`
+	RestoreBackup   string        `long:"restore-backup" description:"Restore a backup archive into data-dir and exit"`
 }
 
 func run(args []string) error {
@@ -51,6 +62,47 @@ func run(args []string) error {
 	}
 	if opts.ShowVersion {
 		fmt.Printf("trusttunnel-controller %s (%s)\n", version, commit)
+		return nil
+	}
+	if opts.MigrateLegacy != "" {
+		result, err := migration.Run(context.Background(), opts.MigrateLegacy, opts.DataDir)
+		if err != nil {
+			return fmt.Errorf("legacy migration: %w", err)
+		}
+		fmt.Printf("migration complete users=%d rules=%d certificate=%t already_complete=%t\n", result.Users, result.Rules, result.CertificateImported, result.AlreadyComplete)
+		return nil
+	}
+	if opts.Healthcheck {
+		return checkProbe(opts.ProbeListen, "/healthz")
+	}
+	if opts.Readycheck {
+		return checkProbe(opts.ProbeListen, "/readyz")
+	}
+	versions := backup.Versions{Controller: version, Commit: commit, Endpoint: opts.EndpointVersion}
+	if opts.BackupPath != "" {
+		if err := backup.Create(context.Background(), opts.DataDir, opts.BackupPath, versions); err != nil {
+			return err
+		}
+		if _, err := backup.Verify(opts.BackupPath); err != nil {
+			return err
+		}
+		fmt.Println("backup created and verified")
+		return nil
+	}
+	if opts.VerifyBackup != "" {
+		manifest, err := backup.Verify(opts.VerifyBackup)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("backup verified controller=%s commit=%s endpoint=%s\n", manifest.Versions.Controller, manifest.Versions.Commit, manifest.Versions.Endpoint)
+		return nil
+	}
+	if opts.RestoreBackup != "" {
+		manifest, err := backup.Restore(opts.RestoreBackup, opts.DataDir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("backup restored controller=%s commit=%s endpoint=%s\n", manifest.Versions.Controller, manifest.Versions.Commit, manifest.Versions.Endpoint)
 		return nil
 	}
 
@@ -69,8 +121,22 @@ func run(args []string) error {
 		StopTimeout: opts.StopTimeout, Version: version, Commit: commit,
 		SessionLifetime: opts.SessionLifetime, RenewalLead: opts.RenewalLead,
 		TrustedProxies: opts.TrustedProxies, ExternalTLS: opts.ExternalTLS,
+		ACMEDefaultMode: certificate.Mode(opts.ACMEDefaultMode),
 	}
 	return app.Run(ctx, cfg, log)
+}
+
+func checkProbe(address, path string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + address + path)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("probe %s status %d", path, resp.StatusCode)
+	}
+	return nil
 }
 
 func main() {

@@ -18,6 +18,7 @@ type SessionService interface {
 	Login(context.Context, string, string) (auth.Session, error)
 	Authenticate(context.Context, string) (auth.Admin, error)
 	Logout(context.Context, string) error
+	ChangePassword(context.Context, string, string, string) (auth.Session, error)
 }
 type AuthHandler struct {
 	service SessionService
@@ -81,6 +82,34 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	h.clearCookie(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+func (h *AuthHandler) Account(w http.ResponseWriter, r *http.Request) { h.renderAccount(w, r, "", "") }
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cookie, err := r.Cookie(SessionCookie)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err = r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	session, err := h.service.ChangePassword(r.Context(), cookie.Value, r.FormValue("current_password"), r.FormValue("new_password"))
+	if err != nil {
+		h.renderAccount(w, r, "Password change failed", "")
+		return
+	}
+	h.setCookie(w, session)
+	h.renderAccount(w, r, "", "Password changed and all other sessions were revoked.")
+}
+func (h *AuthHandler) renderAccount(w http.ResponseWriter, r *http.Request, message, notice string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl := template.Must(template.ParseFS(Files, "templates/account.html"))
+	_ = tmpl.Execute(w, struct{ CSRFToken, Error, Notice string }{CSRFToken: CSRFToken(r.Context()), Error: message, Notice: notice})
 }
 func (h *AuthHandler) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

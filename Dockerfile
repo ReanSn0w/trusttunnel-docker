@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm AS controller-build
+FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS controller-build
 ARG TARGETOS TARGETARCH
 ARG CONTROLLER_VERSION=dev
 ARG VCS_REF=unknown
@@ -13,8 +13,9 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags="-s -w -X main.version=$CONTROLLER_VERSION -X main.commit=$VCS_REF" \
     -o /out/trusttunnel-controller ./cmd/trusttunnel-controller
+RUN install -d -m 0700 -o 65532 -g 65532 /out/data
 
-FROM --platform=$TARGETPLATFORM golang:1.26.0-bookworm AS test
+FROM --platform=$TARGETPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS test
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -22,7 +23,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build go test ./...
 
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS endpoint-fetch
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS endpoint-fetch
 ARG TARGETARCH
 ARG TT_VERSION=1.1.0
 ARG TT_SHA256_AMD64=91c2ea3db7416a01b5258a4c047ec22890490bc55e1b194206031aa75144f0e7
@@ -47,11 +48,18 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 ARG CONTROLLER_VERSION=dev
 ARG VCS_REF=unknown
 ARG TT_VERSION=1.1.0
+ARG TT_SHA256_AMD64=91c2ea3db7416a01b5258a4c047ec22890490bc55e1b194206031aa75144f0e7
+ARG TT_SHA256_ARM64=c2aee17a1ced349283cba4775202e2baba053b8ea835d4cc23dc67d16c6b9686
 LABEL org.opencontainers.image.title="TrustTunnel Controller" \
       org.opencontainers.image.version="$CONTROLLER_VERSION" \
       org.opencontainers.image.revision="$VCS_REF" \
-      io.trusttunnel.endpoint.version="$TT_VERSION"
+      org.opencontainers.image.source="https://github.com/reansnow/trusttunnel-controller" \
+      io.trusttunnel.controller.version="$CONTROLLER_VERSION" \
+      io.trusttunnel.endpoint.version="$TT_VERSION" \
+      io.trusttunnel.endpoint.sha256.amd64="$TT_SHA256_AMD64" \
+      io.trusttunnel.endpoint.sha256.arm64="$TT_SHA256_ARM64"
 COPY --from=controller-build --chown=65532:65532 /out/trusttunnel-controller /usr/local/bin/trusttunnel-controller
+COPY --from=controller-build --chown=65532:65532 /out/data /var/lib/trusttunnel
 COPY --from=endpoint-fetch --chown=65532:65532 /trusttunnel_endpoint /usr/local/bin/trusttunnel_endpoint
 COPY --chown=65532:65532 LICENSES /licenses
 USER 65532:65532

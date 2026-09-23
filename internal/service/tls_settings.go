@@ -18,17 +18,25 @@ type CertificateOperations interface {
 	Renew(context.Context) (certificate.Metadata, error)
 }
 type TLSSettingsService struct {
-	repo TLSSettingsRepository
-	cert CertificateOperations
+	repo        TLSSettingsRepository
+	cert        CertificateOperations
+	defaultMode certificate.Mode
 }
 
 func NewTLSSettingsService(repo TLSSettingsRepository, cert CertificateOperations) *TLSSettingsService {
-	return &TLSSettingsService{repo: repo, cert: cert}
+	return &TLSSettingsService{repo: repo, cert: cert, defaultMode: certificate.Production}
+}
+func NewTLSSettingsServiceWithMode(repo TLSSettingsRepository, cert CertificateOperations, mode certificate.Mode) *TLSSettingsService {
+	s := NewTLSSettingsService(repo, cert)
+	if mode == certificate.Staging {
+		s.defaultMode = mode
+	}
+	return s
 }
 func (s *TLSSettingsService) View(ctx context.Context) (certificate.Metadata, error) {
 	m, err := s.repo.LoadTLSMetadata(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return certificate.Metadata{State: certificate.Unconfigured, Mode: certificate.Production}, nil
+		return certificate.Metadata{State: certificate.Unconfigured, Mode: s.defaultMode}, nil
 	}
 	return m, err
 }
