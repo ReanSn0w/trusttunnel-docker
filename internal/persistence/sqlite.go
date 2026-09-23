@@ -258,6 +258,49 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, username, passwordHash str
 	return tx.Commit()
 }
 
+func (s *Store) AdminByUsername(ctx context.Context, username string) (auth.Admin, error) {
+	var a auth.Admin
+	err := s.db.QueryRowContext(ctx, "SELECT id,username,password_hash FROM admins WHERE username=?", username).Scan(&a.ID, &a.Username, &a.PasswordHash)
+	return a, err
+}
+func (s *Store) AdminByID(ctx context.Context, id int64) (auth.Admin, error) {
+	var a auth.Admin
+	err := s.db.QueryRowContext(ctx, "SELECT id,username,password_hash FROM admins WHERE id=?", id).Scan(&a.ID, &a.Username, &a.PasswordHash)
+	return a, err
+}
+func (s *Store) CreateSession(ctx context.Context, hash []byte, adminID int64, expires time.Time) error {
+	_, err := s.db.ExecContext(ctx, "INSERT INTO sessions(token_hash,admin_id,expires_at,created_at) VALUES(?,?,?,?)", hash, adminID, expires.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+func (s *Store) SessionAdmin(ctx context.Context, hash []byte, now time.Time) (auth.Admin, error) {
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at<=?", now.UTC().Format(time.RFC3339Nano))
+	var a auth.Admin
+	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.username,a.password_hash FROM sessions s JOIN admins a ON a.id=s.admin_id WHERE s.token_hash=? AND s.expires_at>?`, hash, now.UTC().Format(time.RFC3339Nano)).Scan(&a.ID, &a.Username, &a.PasswordHash)
+	return a, err
+}
+func (s *Store) DeleteSession(ctx context.Context, hash []byte) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash=?", hash)
+	return err
+}
+func (s *Store) UpdateAdminPassword(ctx context.Context, adminID int64, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "UPDATE admins SET password_hash=?,updated_at=? WHERE id=?", passwordHash, time.Now().UTC().Format(time.RFC3339Nano), adminID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE admin_id=?", adminID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Store) DeleteAdmin(ctx context.Context, adminID int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM admins WHERE id=?", adminID)
+	return err
+}
+
 func (s *Store) SaveACMEAccount(ctx context.Context, directoryURL, email, registrationURI, status, lastError string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO acme_account(id,directory_url,email,registration_uri,status,last_error,created_at,updated_at)
