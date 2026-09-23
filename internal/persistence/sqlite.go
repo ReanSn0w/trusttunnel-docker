@@ -6,14 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 
+	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var migrations = []string{`
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -60,6 +62,37 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at);
+`, `
+CREATE TABLE IF NOT EXISTS acme_account (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    directory_url TEXT NOT NULL,
+    email TEXT NOT NULL,
+    registration_uri TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'new',
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tls_certificate (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT NOT NULL CHECK (state IN ('unconfigured','issuing','active','renewing','degraded','manual')),
+    mode TEXT NOT NULL CHECK (mode IN ('production','staging','manual')),
+    hostname TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    directory_url TEXT NOT NULL DEFAULT '',
+    registration_uri TEXT NOT NULL DEFAULT '',
+    serial TEXT NOT NULL DEFAULT '',
+    issuer TEXT NOT NULL DEFAULT '',
+    sans TEXT NOT NULL DEFAULT '',
+    not_before TEXT NOT NULL DEFAULT '',
+    not_after TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT NOT NULL DEFAULT '',
+    active_revision TEXT NOT NULL DEFAULT '',
+    previous_revision TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tls_certificate_expiry_idx ON tls_certificate(not_after);
 `}
 
 type Store struct{ db *sql.DB }
@@ -197,3 +230,39 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version)
 	return version, err
 }
+
+func (s *Store) SaveACMEAccount(ctx context.Context, directoryURL, email, registrationURI, status, lastError string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO acme_account(id,directory_url,email,registration_uri,status,last_error,created_at,updated_at)
+        VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET directory_url=excluded.directory_url,email=excluded.email,
+        registration_uri=excluded.registration_uri,status=excluded.status,last_error=excluded.last_error,updated_at=excluded.updated_at`, directoryURL, email, registrationURI, status, lastError, now, now)
+	return err
+}
+
+func (s *Store) SaveTLSMetadata(ctx context.Context, m certificate.Metadata) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tls_certificate(id,state,mode,hostname,email,directory_url,registration_uri,serial,issuer,sans,not_before,not_after,fingerprint,active_revision,previous_revision,last_error,updated_at)
+        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,mode=excluded.mode,hostname=excluded.hostname,email=excluded.email,directory_url=excluded.directory_url,registration_uri=excluded.registration_uri,serial=excluded.serial,issuer=excluded.issuer,sans=excluded.sans,not_before=excluded.not_before,not_after=excluded.not_after,fingerprint=excluded.fingerprint,active_revision=excluded.active_revision,previous_revision=excluded.previous_revision,last_error=excluded.last_error,updated_at=excluded.updated_at`, m.State, m.Mode, m.Hostname, m.Email, m.DirectoryURL, m.RegistrationURI, m.Serial, m.Issuer, strings.Join(m.SANs, "\n"), formatTime(m.NotBefore), formatTime(m.NotAfter), m.Fingerprint, m.ActiveRevision, m.PreviousRevision, m.LastError, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) LoadTLSMetadata(ctx context.Context) (certificate.Metadata, error) {
+	var m certificate.Metadata
+	var sans, notBefore, notAfter, updated string
+	err := s.db.QueryRowContext(ctx, `SELECT state,mode,hostname,email,directory_url,registration_uri,serial,issuer,sans,not_before,not_after,fingerprint,active_revision,previous_revision,last_error,updated_at FROM tls_certificate WHERE id=1`).Scan(&m.State, &m.Mode, &m.Hostname, &m.Email, &m.DirectoryURL, &m.RegistrationURI, &m.Serial, &m.Issuer, &sans, &notBefore, &notAfter, &m.Fingerprint, &m.ActiveRevision, &m.PreviousRevision, &m.LastError, &updated)
+	if err != nil {
+		return m, err
+	}
+	if sans != "" {
+		m.SANs = strings.Split(sans, "\n")
+	}
+	m.NotBefore, m.NotAfter, m.UpdatedAt = parseTime(notBefore), parseTime(notAfter), parseTime(updated)
+	return m, nil
+}
+
+func formatTime(v time.Time) string {
+	if v.IsZero() {
+		return ""
+	}
+	return v.UTC().Format(time.RFC3339Nano)
+}
+func parseTime(v string) time.Time { t, _ := time.Parse(time.RFC3339Nano, v); return t }
