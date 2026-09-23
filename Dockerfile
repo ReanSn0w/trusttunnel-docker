@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm AS controller-build
+FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS controller-build
 ARG TARGETOS TARGETARCH
 ARG CONTROLLER_VERSION=dev
 ARG VCS_REF=unknown
@@ -14,7 +14,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     -ldflags="-s -w -X main.version=$CONTROLLER_VERSION -X main.commit=$VCS_REF" \
     -o /out/trusttunnel-controller ./cmd/trusttunnel-controller
 
-FROM --platform=$TARGETPLATFORM golang:1.26.0-bookworm AS test
+FROM --platform=$TARGETPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS test
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -22,7 +22,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build go test ./...
 
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS endpoint-fetch
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS endpoint-fetch
 ARG TARGETARCH
 ARG TT_VERSION=1.1.0
 ARG TT_SHA256_AMD64=91c2ea3db7416a01b5258a4c047ec22890490bc55e1b194206031aa75144f0e7
