@@ -6,6 +6,7 @@ require (
 	github.com/go-acme/lego/v5 v5.3.1
 	github.com/go-pkgz/lgr v0.11.1
 	github.com/jessevdk/go-flags v1.6.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.59.0
 )
