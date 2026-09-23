@@ -14,6 +14,7 @@ import (
 	flags "github.com/jessevdk/go-flags"
 
 	"github.com/reansnow/trusttunnel-controller/internal/app"
+	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/migration"
 )
 
@@ -41,6 +42,7 @@ type options struct {
 	ShowVersion     bool          `long:"version" description:"Print version and exit"`
 	MigrateLegacy   string        `long:"migrate-legacy" env:"TT_MIGRATE_LEGACY" description:"Import an absolute legacy volume path and exit"`
 	Healthcheck     bool          `long:"healthcheck" description:"Check the local health endpoint and exit"`
+	ACMEDefaultMode string        `long:"acme-default-mode" env:"TT_ACME_DEFAULT_MODE" choice:"production" choice:"staging" default:"production" description:"Default ACME mode before first configuration"`
 }
 
 func run(args []string) error {
@@ -93,6 +95,7 @@ func run(args []string) error {
 		StopTimeout: opts.StopTimeout, Version: version, Commit: commit,
 		SessionLifetime: opts.SessionLifetime, RenewalLead: opts.RenewalLead,
 		TrustedProxies: opts.TrustedProxies, ExternalTLS: opts.ExternalTLS,
+		ACMEDefaultMode: certificate.Mode(opts.ACMEDefaultMode),
 	}
 	return app.Run(ctx, cfg, log)
 }

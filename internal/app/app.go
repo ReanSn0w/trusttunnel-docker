@@ -36,6 +36,7 @@ type Config struct {
 	Version, Commit                                                                           string
 	TrustedProxies                                                                            []string
 	ExternalTLS                                                                               bool
+	ACMEDefaultMode                                                                           certificate.Mode
 }
 
 func (c Config) Validate() error {
@@ -105,7 +106,7 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	tlsCoordinator := service.NewTLSCoordinator(store, tlsStore, materializer, readyProc, nil)
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
-	tlsSettings := service.NewTLSSettingsService(store, certificateManager)
+	tlsSettings := service.NewTLSSettingsServiceWithMode(store, certificateManager, cfg.ACMEDefaultMode)
 	renewal := certificate.NewScheduler(store, certificateManager.Renew, cfg.RenewalLead)
 	if err = renewal.Start(ctx); err != nil {
 		return err
