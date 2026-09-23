@@ -206,6 +206,48 @@ func (s *Store) UpsertUser(ctx context.Context, u domain.VPNUser) error {
 	return err
 }
 
+func (s *Store) ListUsers(ctx context.Context) ([]domain.VPNUser, error) {
+	snap, err := s.Snapshot(ctx)
+	return snap.Users, err
+}
+func (s *Store) UserByID(ctx context.Context, id int64) (domain.VPNUser, error) {
+	var u domain.VPNUser
+	var created, updated string
+	err := s.db.QueryRowContext(ctx, "SELECT id,username,credential,status,created_at,updated_at FROM vpn_users WHERE id=?", id).Scan(&u.ID, &u.Username, &u.Credential, &u.Status, &created, &updated)
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	u.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return u, err
+}
+func (s *Store) InsertUser(ctx context.Context, u domain.VPNUser) (int64, error) {
+	if u.Status != domain.UserActive {
+		return 0, errors.New("new user must be active")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, "INSERT INTO vpn_users(username,credential,status,created_at,updated_at) VALUES(?,?,?,?,?)", u.Username, u.Credential, u.Status, now, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+func (s *Store) UpdateUser(ctx context.Context, u domain.VPNUser) error {
+	if u.Status != domain.UserActive && u.Status != domain.UserDisabled && u.Status != domain.UserRevoked {
+		return errors.New("invalid user status")
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE vpn_users SET username=?,credential=?,status=?,updated_at=? WHERE id=?", u.Username, u.Credential, u.Status, time.Now().UTC().Format(time.RFC3339Nano), u.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err == nil && n != 1 {
+		return sql.ErrNoRows
+	}
+	return err
+}
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM vpn_users WHERE id=?", id)
+	return err
+}
+
 func (s *Store) RecordEvent(ctx context.Context, e domain.ApplyEvent) error {
 	if len(e.Error) > 2048 {
 		e.Error = e.Error[:2048]
