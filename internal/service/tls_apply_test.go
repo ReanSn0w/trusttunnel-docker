@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
@@ -27,23 +28,27 @@ func (r *tlsRepoStub) RecordEvent(_ context.Context, e domain.ApplyEvent) error 
 	return nil
 }
 
-type tlsStoreStub struct{ rolled bool }
+type tlsStoreStub struct {
+	rolled      bool
+	rollbackErr error
+}
 
 func (s *tlsStoreStub) Publish(context.Context, certificate.Bundle) (certificate.Published, error) {
 	return certificate.Published{Revision: "tls-new", CertificatePath: "/tls/new/cert.pem", PrivateKeyPath: "/tls/new/key.pem"}, nil
 }
-func (s *tlsStoreStub) Rollback(context.Context) error { s.rolled = true; return nil }
+func (s *tlsStoreStub) Rollback(context.Context) error { s.rolled = true; return s.rollbackErr }
 
 type configStoreStub struct {
-	rolled bool
-	files  config.Files
+	rolled      bool
+	rollbackErr error
+	files       config.Files
 }
 
 func (s *configStoreStub) Apply(f config.Files) (string, error) {
 	s.files = f
 	return "config-new", nil
 }
-func (s *configStoreStub) Rollback() error { s.rolled = true; return nil }
+func (s *configStoreStub) Rollback() error { s.rolled = true; return s.rollbackErr }
 
 type reloadStub struct {
 	calls    int
@@ -86,5 +91,22 @@ func TestTLSCoordinatorRollsBackAndReloadsPrevious(t *testing.T) {
 	}
 	if !tlsStore.rolled || !configs.rolled || repo.revision != "config-old" || proc.calls != 2 {
 		t.Fatalf("tls=%v config=%v revision=%s calls=%d", tlsStore.rolled, configs.rolled, repo.revision, proc.calls)
+	}
+}
+
+func TestTLSCoordinatorReportsRollbackFailure(t *testing.T) {
+	repo := &tlsRepoStub{revision: "config-old", snapshot: domain.Snapshot{Hostname: "vpn.example.net", ListenAddress: "0.0.0.0:8443"}}
+	tlsStore := &tlsStoreStub{rollbackErr: errors.New("tls rollback failed")}
+	configs := &configStoreStub{rollbackErr: errors.New("config rollback failed")}
+	proc := &reloadStub{firstErr: errors.New("sighup failed")}
+	c := NewTLSCoordinator(repo, tlsStore, configs, proc, nil)
+	_, err := c.Publish(context.Background(), certificate.Bundle{})
+	if err == nil || !tlsStore.rolled || !configs.rolled {
+		t.Fatalf("err=%v tls=%v config=%v", err, tlsStore.rolled, configs.rolled)
+	}
+	for _, want := range []string{"tls rollback failed", "config rollback failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in %v", want, err)
+		}
 	}
 }

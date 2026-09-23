@@ -38,7 +38,7 @@ func TestAccountKeyIsRestored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Public().(*ecdsa.PublicKey).X.Cmp(second.Public().(*ecdsa.PublicKey).X) != 0 {
+	if !first.Public().(*ecdsa.PublicKey).Equal(second.Public()) {
 		t.Fatal("account key changed")
 	}
 }

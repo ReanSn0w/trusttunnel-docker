@@ -8,7 +8,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -92,6 +94,21 @@ type fakeACME struct{ bundle Bundle }
 func (f fakeACME) EnsureAccount(context.Context) (string, error)  { return "account-uri", nil }
 func (f fakeACME) Obtain(context.Context, string) (Bundle, error) { return f.bundle, nil }
 
+type failingACME struct{ err error }
+
+func (f failingACME) EnsureAccount(context.Context) (string, error) { return "account-uri", nil }
+func (f failingACME) Obtain(context.Context, string) (Bundle, error) {
+	return Bundle{}, f.err
+}
+
+type blockingACME struct{}
+
+func (blockingACME) EnsureAccount(context.Context) (string, error) { return "account-uri", nil }
+func (blockingACME) Obtain(ctx context.Context, _ string) (Bundle, error) {
+	<-ctx.Done()
+	return Bundle{}, ctx.Err()
+}
+
 type fakePublisher struct{}
 
 func (fakePublisher) Publish(context.Context, Bundle) (Published, error) {
@@ -135,5 +152,45 @@ func TestManagerManualImport(t *testing.T) {
 	}
 	if got.State != Manual || got.Mode != ManualMode || got.ActiveRevision != "tls-r1" {
 		t.Fatalf("metadata=%#v", got)
+	}
+}
+
+func TestManagerNetworkTimeout(t *testing.T) {
+	repo := &certRepo{m: Metadata{State: Unconfigured}}
+	m := NewManager(repo, fakePublisher{}, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Millisecond, func(ACMEConfig) (ACMEClient, error) {
+		return blockingACME{}, nil
+	})
+	got, err := m.Issue(context.Background(), Staging, "admin@example.net", "vpn.example.net")
+	if !errors.Is(err, context.DeadlineExceeded) || got.State != Degraded {
+		t.Fatalf("state=%s err=%v", got.State, err)
+	}
+}
+
+func TestManagerHistoryRedaction(t *testing.T) {
+	repo := &certRepo{m: Metadata{State: Unconfigured}}
+	leak := errors.New("network timeout token=challenge-secret -----BEGIN PRIVATE KEY-----")
+	m := NewManager(repo, fakePublisher{}, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+		return failingACME{err: leak}, nil
+	})
+	got, err := m.Issue(context.Background(), Staging, "admin@example.net", "vpn.example.net")
+	if err == nil || got.State != Degraded {
+		t.Fatalf("state=%s err=%v", got.State, err)
+	}
+	if len(repo.events) != 1 {
+		t.Fatalf("events=%d", len(repo.events))
+	}
+	for _, secret := range []string{"challenge-secret", "PRIVATE KEY"} {
+		if strings.Contains(got.LastError, secret) || strings.Contains(repo.events[0].Error, secret) {
+			t.Fatalf("secret %q leaked: metadata=%q event=%q", secret, got.LastError, repo.events[0].Error)
+		}
+	}
+}
+
+func TestValidateBundleRejectsInvalidChain(t *testing.T) {
+	bundle := makeBundle(t, "vpn.example.net", "Production CA")
+	other := makeBundle(t, "vpn.example.net", "Other CA")
+	bundle.IssuerCertificate = other.IssuerCertificate
+	if _, err := ValidateBundle(bundle, "vpn.example.net", Production, time.Now()); err == nil {
+		t.Fatal("accepted certificate with unrelated issuer")
 	}
 }

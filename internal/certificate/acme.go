@@ -34,6 +34,7 @@ type ACMEClient interface {
 type ACMEConfig struct {
 	Mode                            Mode
 	Email, DataDir, RegistrationURI string
+	DirectoryOverride               string
 	Provider                        challenge.Provider
 	Timeout                         time.Duration
 }
@@ -82,6 +83,9 @@ func NewLegoClient(cfg ACMEConfig) (*LegoClient, error) {
 	directory, err := DirectoryURL(cfg.Mode)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.DirectoryOverride != "" {
+		directory = cfg.DirectoryOverride
 	}
 	lcfg := lego.NewConfig(user)
 	lcfg.CADirURL = directory

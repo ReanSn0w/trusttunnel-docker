@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -325,6 +326,8 @@ func sanitizeCertificateError(err error) string {
 			s = s[:i] + "[REDACTED]"
 		}
 	}
+	secretAssignment := regexp.MustCompile(`(?i)(password|token|credential|cookie|csrf|keyauth)(\s*[:=]\s*)\S+`)
+	s = secretAssignment.ReplaceAllString(s, `$1$2[REDACTED]`)
 	if len(s) > 512 {
 		s = s[:512]
 	}
