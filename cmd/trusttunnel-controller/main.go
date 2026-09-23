@@ -43,6 +43,7 @@ type options struct {
 	ShowVersion     bool          `long:"version" description:"Print version and exit"`
 	MigrateLegacy   string        `long:"migrate-legacy" env:"TT_MIGRATE_LEGACY" description:"Import an absolute legacy volume path and exit"`
 	Healthcheck     bool          `long:"healthcheck" description:"Check the local health endpoint and exit"`
+	Readycheck      bool          `long:"readycheck" description:"Check the local readiness endpoint and exit"`
 	ACMEDefaultMode string        `long:"acme-default-mode" env:"TT_ACME_DEFAULT_MODE" choice:"production" choice:"staging" default:"production" description:"Default ACME mode before first configuration"`
 	BackupPath      string        `long:"backup" description:"Create a verified backup archive at an absolute path and exit"`
 	VerifyBackup    string        `long:"verify-backup" description:"Verify a backup archive and exit"`
@@ -72,16 +73,10 @@ func run(args []string) error {
 		return nil
 	}
 	if opts.Healthcheck {
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Get("http://" + opts.ProbeListen + "/healthz")
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("health status %d", resp.StatusCode)
-		}
-		return nil
+		return checkProbe(opts.ProbeListen, "/healthz")
+	}
+	if opts.Readycheck {
+		return checkProbe(opts.ProbeListen, "/readyz")
 	}
 	versions := backup.Versions{Controller: version, Commit: commit, Endpoint: opts.EndpointVersion}
 	if opts.BackupPath != "" {
@@ -129,6 +124,19 @@ func run(args []string) error {
 		ACMEDefaultMode: certificate.Mode(opts.ACMEDefaultMode),
 	}
 	return app.Run(ctx, cfg, log)
+}
+
+func checkProbe(address, path string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + address + path)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("probe %s status %d", path, resp.StatusCode)
+	}
+	return nil
 }
 
 func main() {

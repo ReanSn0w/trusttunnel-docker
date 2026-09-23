@@ -71,13 +71,16 @@ jobs:
     needs: platform
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
       - uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.10.0
-      - name: Create immutable multi-arch manifest
+      - name: Verify candidate and publish immutable multi-arch manifest
         env:
           VERSION: ${{ github.ref_name }}
           REVISION: ${{ github.sha }}
@@ -85,13 +88,21 @@ jobs:
           set -eu
           short_sha="$(printf '%s' "$REVISION" | cut -c1-12)"
           docker buildx imagetools create \
-            --tag "$IMAGE:$VERSION" \
-            --tag "$IMAGE:sha-$short_sha" \
+            --tag "$IMAGE:candidate-$REVISION" \
             "$IMAGE:build-$REVISION-amd64" \
             "$IMAGE:build-$REVISION-arm64"
-          digest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          digest="$(docker buildx imagetools inspect "$IMAGE:candidate-$REVISION" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           cosign sign --yes "$IMAGE@$digest"
-          cosign verify \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          ./scripts/verify-release.sh "$IMAGE@$digest"
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "release tag already exists: $IMAGE:$VERSION" >&2
+            exit 1
+          fi
+          if docker buildx imagetools inspect "$IMAGE:sha-$short_sha" >/dev/null 2>&1; then
+            echo "commit tag already exists: $IMAGE:sha-$short_sha" >&2
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:$VERSION" \
+            --tag "$IMAGE:sha-$short_sha" \
             "$IMAGE@$digest"

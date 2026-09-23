@@ -13,6 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags="-s -w -X main.version=$CONTROLLER_VERSION -X main.commit=$VCS_REF" \
     -o /out/trusttunnel-controller ./cmd/trusttunnel-controller
+RUN install -d -m 0700 -o 65532 -g 65532 /out/data
 
 FROM --platform=$TARGETPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS test
 WORKDIR /src
@@ -58,6 +59,7 @@ LABEL org.opencontainers.image.title="TrustTunnel Controller" \
       io.trusttunnel.endpoint.sha256.amd64="$TT_SHA256_AMD64" \
       io.trusttunnel.endpoint.sha256.arm64="$TT_SHA256_ARM64"
 COPY --from=controller-build --chown=65532:65532 /out/trusttunnel-controller /usr/local/bin/trusttunnel-controller
+COPY --from=controller-build --chown=65532:65532 /out/data /var/lib/trusttunnel
 COPY --from=endpoint-fetch --chown=65532:65532 /trusttunnel_endpoint /usr/local/bin/trusttunnel_endpoint
 COPY --chown=65532:65532 LICENSES /licenses
 USER 65532:65532
