@@ -13,6 +13,7 @@ import (
 	flags "github.com/jessevdk/go-flags"
 
 	"github.com/reansnow/trusttunnel-controller/internal/app"
+	"github.com/reansnow/trusttunnel-controller/internal/migration"
 )
 
 var (
@@ -37,6 +38,7 @@ type options struct {
 	LogFormat       string        `long:"log-format" env:"TT_LOG_FORMAT" choice:"json" choice:"text" default:"json" description:"Log encoding"`
 	LogLevel        string        `long:"log-level" env:"TT_LOG_LEVEL" default:"info" description:"Log severity"`
 	ShowVersion     bool          `long:"version" description:"Print version and exit"`
+	MigrateLegacy   string        `long:"migrate-legacy" env:"TT_MIGRATE_LEGACY" description:"Import an absolute legacy volume path and exit"`
 }
 
 func run(args []string) error {
@@ -51,6 +53,14 @@ func run(args []string) error {
 	}
 	if opts.ShowVersion {
 		fmt.Printf("trusttunnel-controller %s (%s)\n", version, commit)
+		return nil
+	}
+	if opts.MigrateLegacy != "" {
+		result, err := migration.Run(context.Background(), opts.MigrateLegacy, opts.DataDir)
+		if err != nil {
+			return fmt.Errorf("legacy migration: %w", err)
+		}
+		fmt.Printf("migration complete users=%d rules=%d certificate=%t already_complete=%t\n", result.Users, result.Rules, result.CertificateImported, result.AlreadyComplete)
 		return nil
 	}
 

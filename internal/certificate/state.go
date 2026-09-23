@@ -32,6 +32,7 @@ type Metadata struct {
 	SANs                                           []string
 	NotBefore, NotAfter                            time.Time
 	Fingerprint, ActiveRevision, PreviousRevision  string
+	CertificatePath, PrivateKeyPath                string
 	LastError                                      string
 	UpdatedAt                                      time.Time
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/reansnow/trusttunnel-controller/internal/auth"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/config"
+	"github.com/reansnow/trusttunnel-controller/internal/datalock"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 	"github.com/reansnow/trusttunnel-controller/internal/endpointcli"
 	"github.com/reansnow/trusttunnel-controller/internal/logbuffer"
@@ -63,6 +64,11 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
+	dataLock, err := datalock.Acquire(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer dataLock.Close()
 	store, err := persistence.Open(ctx, filepath.Join(cfg.DataDir, "controller.db"))
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)
