@@ -14,6 +14,7 @@ import (
 	flags "github.com/jessevdk/go-flags"
 
 	"github.com/reansnow/trusttunnel-controller/internal/app"
+	"github.com/reansnow/trusttunnel-controller/internal/backup"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/migration"
 )
@@ -43,6 +44,9 @@ type options struct {
 	MigrateLegacy   string        `long:"migrate-legacy" env:"TT_MIGRATE_LEGACY" description:"Import an absolute legacy volume path and exit"`
 	Healthcheck     bool          `long:"healthcheck" description:"Check the local health endpoint and exit"`
 	ACMEDefaultMode string        `long:"acme-default-mode" env:"TT_ACME_DEFAULT_MODE" choice:"production" choice:"staging" default:"production" description:"Default ACME mode before first configuration"`
+	BackupPath      string        `long:"backup" description:"Create a verified backup archive at an absolute path and exit"`
+	VerifyBackup    string        `long:"verify-backup" description:"Verify a backup archive and exit"`
+	RestoreBackup   string        `long:"restore-backup" description:"Restore a backup archive into data-dir and exit"`
 }
 
 func run(args []string) error {
@@ -77,6 +81,33 @@ func run(args []string) error {
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("health status %d", resp.StatusCode)
 		}
+		return nil
+	}
+	versions := backup.Versions{Controller: version, Commit: commit, Endpoint: opts.EndpointVersion}
+	if opts.BackupPath != "" {
+		if err := backup.Create(context.Background(), opts.DataDir, opts.BackupPath, versions); err != nil {
+			return err
+		}
+		if _, err := backup.Verify(opts.BackupPath); err != nil {
+			return err
+		}
+		fmt.Println("backup created and verified")
+		return nil
+	}
+	if opts.VerifyBackup != "" {
+		manifest, err := backup.Verify(opts.VerifyBackup)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("backup verified controller=%s commit=%s endpoint=%s\n", manifest.Versions.Controller, manifest.Versions.Commit, manifest.Versions.Endpoint)
+		return nil
+	}
+	if opts.RestoreBackup != "" {
+		manifest, err := backup.Restore(opts.RestoreBackup, opts.DataDir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("backup restored controller=%s commit=%s endpoint=%s\n", manifest.Versions.Controller, manifest.Versions.Commit, manifest.Versions.Endpoint)
 		return nil
 	}
 
