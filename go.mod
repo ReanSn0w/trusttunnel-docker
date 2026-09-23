@@ -6,6 +6,7 @@ require (
 	github.com/go-acme/lego/v5 v5.3.1
 	github.com/go-pkgz/lgr v0.11.1
 	github.com/jessevdk/go-flags v1.6.1
+	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.59.0
 )
 
@@ -18,7 +19,6 @@ require (
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

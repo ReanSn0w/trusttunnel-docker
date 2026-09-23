@@ -2,10 +2,12 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/reansnow/trusttunnel-controller/internal/auth"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
@@ -42,6 +44,24 @@ func TestMigrationsBootstrapAndRepository(t *testing.T) {
 	defer store.Close()
 	if version, err = store.SchemaVersion(ctx); err != nil || version != schemaVersion {
 		t.Fatalf("version after reopen=%d err=%v", version, err)
+	}
+}
+
+func TestCreateFirstAdminIsTransactional(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if has, err := store.HasAdmin(ctx); err != nil || has {
+		t.Fatalf("has=%v err=%v", has, err)
+	}
+	if err = store.CreateFirstAdmin(ctx, "admin", "argon-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CreateFirstAdmin(ctx, "other", "other-hash"); !errors.Is(err, auth.ErrAlreadyBootstrapped) {
+		t.Fatalf("err=%v", err)
 	}
 }
 

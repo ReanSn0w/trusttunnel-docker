@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/reansnow/trusttunnel-controller/internal/auth"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
@@ -229,6 +230,32 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var version int
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version)
 	return version, err
+}
+
+func (s *Store) HasAdmin(ctx context.Context) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM admins").Scan(&count)
+	return count > 0, err
+}
+
+func (s *Store) CreateFirstAdmin(ctx context.Context, username, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var count int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM admins").Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return auth.ErrAlreadyBootstrapped
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, "INSERT INTO admins(id,username,password_hash,created_at,updated_at) VALUES(1,?,?,?,?)", username, passwordHash, now, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SaveACMEAccount(ctx context.Context, directoryURL, email, registrationURI, status, lastError string) error {
