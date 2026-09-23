@@ -24,6 +24,7 @@ type Config struct {
 	MaxRestarts   int
 	RestartWindow time.Duration
 	MaxLogBytes   int
+	Version       string
 }
 
 type Supervisor struct {
@@ -54,7 +55,7 @@ func New(cfg Config) (*Supervisor, error) {
 	if cfg.MaxLogBytes <= 0 {
 		cfg.MaxLogBytes = 256 << 10
 	}
-	return &Supervisor{cfg: cfg, logs: newRingWriter(cfg.MaxLogBytes), status: domain.EndpointStatus{State: "stopped"}}, nil
+	return &Supervisor{cfg: cfg, logs: newRingWriter(cfg.MaxLogBytes), status: domain.EndpointStatus{State: "stopped", Version: cfg.Version}}, nil
 }
 
 func (s *Supervisor) Start(ctx context.Context, revision string) error {
@@ -81,7 +82,7 @@ func (s *Supervisor) startLocked(ctx context.Context, revision string) error {
 	}
 	s.cmd = cmd
 	s.done = make(chan struct{})
-	s.status = domain.EndpointStatus{State: "starting", Revision: revision, PID: cmd.Process.Pid, StartedAt: time.Now().UTC()}
+	s.status = domain.EndpointStatus{State: "starting", Revision: revision, Version: s.cfg.Version, PID: cmd.Process.Pid, StartedAt: time.Now().UTC()}
 	done := s.done
 	go s.watch(ctx, cmd, revision, done)
 	return nil
