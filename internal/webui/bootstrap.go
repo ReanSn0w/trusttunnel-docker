@@ -29,7 +29,7 @@ func (h *BootstrapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	data := struct{ Error string }{}
+	data := struct{ Error, CSRFToken string }{CSRFToken: CSRFToken(r.Context())}
 	if r.Method == http.MethodPost {
 		if err = r.ParseForm(); err == nil {
 			err = h.service.Bootstrap(r.Context(), r.FormValue("username"), r.FormValue("password"))

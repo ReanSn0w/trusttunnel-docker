@@ -43,7 +43,7 @@ func NewAuthHandler(service SessionService, limiter *auth.LoginLimiter, trustedP
 }
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		h.renderLogin(w, "")
+		h.renderLogin(w, r, "")
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -51,7 +51,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.renderLogin(w, "Invalid username or password")
+		h.renderLogin(w, r, "Invalid username or password")
 		return
 	}
 	username := r.FormValue("username")
@@ -64,7 +64,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	sess, err := h.service.Login(r.Context(), username, r.FormValue("password"))
 	if err != nil {
 		h.limiter.Failure(ip, username)
-		h.renderLogin(w, "Invalid username or password")
+		h.renderLogin(w, r, "Invalid username or password")
 		return
 	}
 	h.limiter.Success(ip, username)
@@ -98,9 +98,9 @@ func (h *AuthHandler) Require(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminContextKey{}, admin)))
 	})
 }
-func (h *AuthHandler) renderLogin(w http.ResponseWriter, message string) {
+func (h *AuthHandler) renderLogin(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = h.login.Execute(w, struct{ Error string }{message})
+	_ = h.login.Execute(w, struct{ Error, CSRFToken string }{message, CSRFToken(r.Context())})
 }
 func (h *AuthHandler) setCookie(w http.ResponseWriter, s auth.Session) {
 	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: s.Token, Path: "/", Expires: s.ExpiresAt, MaxAge: max(1, int(time.Until(s.ExpiresAt).Seconds())), Secure: h.secure, HttpOnly: true, SameSite: http.SameSiteStrictMode})
