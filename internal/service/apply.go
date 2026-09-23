@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/reansnow/trusttunnel-controller/internal/config"
@@ -96,6 +98,13 @@ func sanitizeError(err error) string {
 		return ""
 	}
 	s := err.Error()
+	for _, marker := range []string{"-----BEGIN", "tt://", "/.well-known/acme-challenge/"} {
+		if i := strings.Index(s, marker); i >= 0 {
+			s = s[:i] + "[REDACTED]"
+		}
+	}
+	secretAssignment := regexp.MustCompile(`(?i)(password|token|credential|cookie|csrf|keyauth)(\s*[:=]\s*)\S+`)
+	s = secretAssignment.ReplaceAllString(s, `$1$2[REDACTED]`)
 	if len(s) > 512 {
 		s = s[:512]
 	}

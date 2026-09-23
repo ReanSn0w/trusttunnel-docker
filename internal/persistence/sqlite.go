@@ -257,6 +257,36 @@ func (s *Store) RecordEvent(ctx context.Context, e domain.ApplyEvent) error {
 	return err
 }
 
+func (s *Store) ListApplyEvents(ctx context.Context, before int64, limit int) ([]domain.ApplyEvent, error) {
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("event limit must be between 1 and 100")
+	}
+	query := "SELECT id,revision,kind,action,result,error,created_at FROM apply_events"
+	args := []any{}
+	if before > 0 {
+		query += " WHERE id<?"
+		args = append(args, before)
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]domain.ApplyEvent, 0, limit)
+	for rows.Next() {
+		var e domain.ApplyEvent
+		var at string
+		if err = rows.Scan(&e.ID, &e.Revision, &e.Kind, &e.Action, &e.Result, &e.Error, &at); err != nil {
+			return nil, err
+		}
+		e.At = parseTime(at)
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 func (s *Store) ActiveRevision(ctx context.Context) (string, error) {
 	var revision string
 	err := s.db.QueryRowContext(ctx, "SELECT active_revision FROM settings WHERE id=1").Scan(&revision)
