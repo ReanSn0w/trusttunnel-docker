@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -39,6 +40,7 @@ type options struct {
 	LogLevel        string        `long:"log-level" env:"TT_LOG_LEVEL" default:"info" description:"Log severity"`
 	ShowVersion     bool          `long:"version" description:"Print version and exit"`
 	MigrateLegacy   string        `long:"migrate-legacy" env:"TT_MIGRATE_LEGACY" description:"Import an absolute legacy volume path and exit"`
+	Healthcheck     bool          `long:"healthcheck" description:"Check the local health endpoint and exit"`
 }
 
 func run(args []string) error {
@@ -61,6 +63,18 @@ func run(args []string) error {
 			return fmt.Errorf("legacy migration: %w", err)
 		}
 		fmt.Printf("migration complete users=%d rules=%d certificate=%t already_complete=%t\n", result.Users, result.Rules, result.CertificateImported, result.AlreadyComplete)
+		return nil
+	}
+	if opts.Healthcheck {
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get("http://" + opts.ProbeListen + "/healthz")
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("health status %d", resp.StatusCode)
+		}
 		return nil
 	}
 
