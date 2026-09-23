@@ -39,7 +39,12 @@ type Snapshot struct {
 	Revision                              string
 	Hostname, ListenAddress               string
 	Users                                 []VPNUser
+	Rules                                 []Rule
 	TLSCertificatePath, TLSPrivateKeyPath string
+}
+
+type Rule struct {
+	Name, Action, Network string
 }
 
 type Change struct {
