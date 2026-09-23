@@ -175,6 +175,7 @@ func ValidateBundle(bundle Bundle, hostname string, mode Mode, now time.Time) (*
 
 func parseCertificates(data []byte) ([]*x509.Certificate, error) {
 	var certs []*x509.Certificate
+	seen := map[[32]byte]struct{}{}
 	for len(bytes.TrimSpace(data)) > 0 {
 		block, rest := pem.Decode(data)
 		if block == nil || block.Type != "CERTIFICATE" {
@@ -184,7 +185,11 @@ func parseCertificates(data []byte) ([]*x509.Certificate, error) {
 		if err != nil {
 			return nil, err
 		}
-		certs = append(certs, cert)
+		sum := sha256.Sum256(cert.Raw)
+		if _, ok := seen[sum]; !ok {
+			seen[sum] = struct{}{}
+			certs = append(certs, cert)
+		}
 		data = rest
 	}
 	return certs, nil
