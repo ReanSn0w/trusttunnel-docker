@@ -47,10 +47,16 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 ARG CONTROLLER_VERSION=dev
 ARG VCS_REF=unknown
 ARG TT_VERSION=1.1.0
+ARG TT_SHA256_AMD64=91c2ea3db7416a01b5258a4c047ec22890490bc55e1b194206031aa75144f0e7
+ARG TT_SHA256_ARM64=c2aee17a1ced349283cba4775202e2baba053b8ea835d4cc23dc67d16c6b9686
 LABEL org.opencontainers.image.title="TrustTunnel Controller" \
       org.opencontainers.image.version="$CONTROLLER_VERSION" \
       org.opencontainers.image.revision="$VCS_REF" \
-      io.trusttunnel.endpoint.version="$TT_VERSION"
+      org.opencontainers.image.source="https://github.com/reansnow/trusttunnel-controller" \
+      io.trusttunnel.controller.version="$CONTROLLER_VERSION" \
+      io.trusttunnel.endpoint.version="$TT_VERSION" \
+      io.trusttunnel.endpoint.sha256.amd64="$TT_SHA256_AMD64" \
+      io.trusttunnel.endpoint.sha256.arm64="$TT_SHA256_ARM64"
 COPY --from=controller-build --chown=65532:65532 /out/trusttunnel-controller /usr/local/bin/trusttunnel-controller
 COPY --from=endpoint-fetch --chown=65532:65532 /trusttunnel_endpoint /usr/local/bin/trusttunnel_endpoint
 COPY --chown=65532:65532 LICENSES /licenses
