@@ -123,3 +123,17 @@ func TestManagerRenew(t *testing.T) {
 		t.Fatalf("metadata=%#v", got)
 	}
 }
+
+func TestManagerManualImport(t *testing.T) {
+	bundle := makeBundle(t, "vpn.example.net", "Manual CA")
+	chain := append(append([]byte(nil), bundle.Certificate...), bundle.IssuerCertificate...)
+	repo := &certRepo{m: Metadata{State: Unconfigured}}
+	m := NewManager(repo, fakePublisher{}, nil, t.TempDir(), time.Second, nil)
+	got, err := m.ImportManual(context.Background(), "vpn.example.net", chain, bundle.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != Manual || got.Mode != ManualMode || got.ActiveRevision != "tls-r1" {
+		t.Fatalf("metadata=%#v", got)
+	}
+}

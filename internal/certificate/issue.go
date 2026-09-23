@@ -178,6 +178,45 @@ func (m *Manager) Renew(ctx context.Context) (Metadata, error) {
 	return next, nil
 }
 
+func (m *Manager) ImportManual(ctx context.Context, hostname string, chain, privateKey []byte) (Metadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, err := m.repo.LoadTLSMetadata(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		current = Metadata{State: Unconfigured}
+	} else if err != nil {
+		return Metadata{}, err
+	}
+	bundle := Bundle{Certificate: bytes.Clone(chain), PrivateKey: bytes.Clone(privateKey)}
+	validated, err := ValidateBundle(bundle, hostname, ManualMode, m.now())
+	if err != nil {
+		return current, err
+	}
+	published, err := m.publisher.Publish(ctx, bundle)
+	if err != nil {
+		return current, err
+	}
+	next := current
+	next.State = Manual
+	next.Mode = ManualMode
+	next.Hostname = hostname
+	next.Serial = validated.SerialNumber.String()
+	next.Issuer = validated.Issuer.String()
+	next.SANs = append([]string(nil), validated.DNSNames...)
+	next.NotBefore = validated.NotBefore
+	next.NotAfter = validated.NotAfter
+	next.Fingerprint = fingerprint(validated)
+	next.PreviousRevision = current.ActiveRevision
+	next.ActiveRevision = published.Revision
+	next.LastError = ""
+	next.UpdatedAt = m.now().UTC()
+	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
+		return current, err
+	}
+	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-manual", Action: "sighup", Result: "success"})
+	return next, nil
+}
+
 func (m *Manager) fail(ctx context.Context, state Metadata, stage string, cause error) (Metadata, error) {
 	state.State = Degraded
 	state.LastError = sanitizeCertificateError(cause)
