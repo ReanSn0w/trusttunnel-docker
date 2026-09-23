@@ -298,6 +298,11 @@ func (s *Store) SetActiveRevision(ctx context.Context, revision string) error {
 	return err
 }
 
+func (s *Store) SetHostname(ctx context.Context, hostname string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE settings SET hostname=?,updated_at=? WHERE id=1", hostname, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var version int
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version)

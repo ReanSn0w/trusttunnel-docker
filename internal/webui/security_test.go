@@ -49,3 +49,23 @@ func TestSecurityHeadersRequestIDAndBodyLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectLoopbackOmitsHSTS(t *testing.T) {
+	w := httptest.NewRecorder()
+	SecurityMiddleware(nil, false, 1024, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	if w.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatal("HSTS set for direct HTTP")
+	}
+}
+
+func TestMalformedFormDoesNotReachMutation(t *testing.T) {
+	called := false
+	h := NewCSRF(true).Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("%zz"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden || called {
+		t.Fatalf("code=%d called=%v", w.Code, called)
+	}
+}

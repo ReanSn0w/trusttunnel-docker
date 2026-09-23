@@ -11,6 +11,7 @@ import (
 type TLSSettingsRepository interface {
 	LoadTLSMetadata(context.Context) (certificate.Metadata, error)
 	SaveTLSMetadata(context.Context, certificate.Metadata) error
+	SetHostname(context.Context, string) error
 }
 type CertificateOperations interface {
 	Issue(context.Context, certificate.Mode, string, string) (certificate.Metadata, error)
@@ -50,6 +51,9 @@ func (s *TLSSettingsService) Save(ctx context.Context, hostname, email string, m
 		current.State = certificate.Unconfigured
 	}
 	if err = s.repo.SaveTLSMetadata(ctx, current); err != nil {
+		return current, err
+	}
+	if err = s.repo.SetHostname(ctx, hostname); err != nil {
 		return current, err
 	}
 	return current, nil

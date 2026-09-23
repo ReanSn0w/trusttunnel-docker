@@ -21,16 +21,22 @@ var (
 )
 
 type options struct {
-	DataDir        string        `long:"data-dir" env:"TT_DATA_DIR" default:"/var/lib/trusttunnel" description:"Persistent data directory"`
-	EndpointBinary string        `long:"endpoint-binary" env:"TT_ENDPOINT_BINARY" default:"/usr/local/bin/trusttunnel_endpoint" description:"Official endpoint binary"`
-	UIListen       string        `long:"ui-listen" env:"TT_UI_LISTEN" default:"127.0.0.1:8080" description:"Admin UI listener"`
-	MetricsURL     string        `long:"metrics-url" env:"TT_METRICS_URL" default:"http://127.0.0.1:9090/metrics" description:"Internal endpoint metrics URL"`
-	ProbeListen    string        `long:"probe-listen" env:"TT_PROBE_LISTEN" default:"127.0.0.1:8081" description:"Health/readiness listener"`
-	StartTimeout   time.Duration `long:"start-timeout" env:"TT_START_TIMEOUT" default:"15s" description:"Endpoint start timeout"`
-	StopTimeout    time.Duration `long:"stop-timeout" env:"TT_STOP_TIMEOUT" default:"10s" description:"Endpoint graceful stop timeout"`
-	LogFormat      string        `long:"log-format" env:"TT_LOG_FORMAT" choice:"json" choice:"text" default:"json" description:"Log encoding"`
-	LogLevel       string        `long:"log-level" env:"TT_LOG_LEVEL" default:"info" description:"Log severity"`
-	ShowVersion    bool          `long:"version" description:"Print version and exit"`
+	DataDir         string        `long:"data-dir" env:"TT_DATA_DIR" default:"/var/lib/trusttunnel" description:"Persistent data directory"`
+	EndpointBinary  string        `long:"endpoint-binary" env:"TT_ENDPOINT_BINARY" default:"/usr/local/bin/trusttunnel_endpoint" description:"Official endpoint binary"`
+	EndpointVersion string        `long:"endpoint-version" env:"TT_ENDPOINT_VERSION" default:"1.1.0" description:"Official endpoint version"`
+	UIListen        string        `long:"ui-listen" env:"TT_UI_LISTEN" default:"127.0.0.1:8080" description:"Admin UI listener"`
+	MetricsURL      string        `long:"metrics-url" env:"TT_METRICS_URL" default:"http://127.0.0.1:9090/metrics" description:"Internal endpoint metrics URL"`
+	ProbeListen     string        `long:"probe-listen" env:"TT_PROBE_LISTEN" default:"127.0.0.1:8081" description:"Health/readiness listener"`
+	HTTP01Listen    string        `long:"http01-listen" env:"TT_HTTP01_LISTEN" default:"0.0.0.0:80" description:"Temporary ACME HTTP-01 listener"`
+	TrustedProxies  []string      `long:"trusted-proxy" env:"TT_TRUSTED_PROXY" description:"Trusted reverse proxy CIDR (repeatable)"`
+	ExternalTLS     bool          `long:"external-tls" env:"TT_EXTERNAL_TLS" description:"Enable HSTS for externally terminated TLS"`
+	StartTimeout    time.Duration `long:"start-timeout" env:"TT_START_TIMEOUT" default:"15s" description:"Endpoint start timeout"`
+	StopTimeout     time.Duration `long:"stop-timeout" env:"TT_STOP_TIMEOUT" default:"10s" description:"Endpoint graceful stop timeout"`
+	SessionLifetime time.Duration `long:"session-lifetime" env:"TT_SESSION_LIFETIME" default:"12h" description:"Administrator session lifetime"`
+	RenewalLead     time.Duration `long:"renewal-lead" env:"TT_RENEWAL_LEAD" default:"720h" description:"Certificate renewal lead time"`
+	LogFormat       string        `long:"log-format" env:"TT_LOG_FORMAT" choice:"json" choice:"text" default:"json" description:"Log encoding"`
+	LogLevel        string        `long:"log-level" env:"TT_LOG_LEVEL" default:"info" description:"Log severity"`
+	ShowVersion     bool          `long:"version" description:"Print version and exit"`
 }
 
 func run(args []string) error {
@@ -57,10 +63,12 @@ func run(args []string) error {
 	defer cancel()
 
 	cfg := app.Config{
-		DataDir: opts.DataDir, EndpointBinary: opts.EndpointBinary,
+		DataDir: opts.DataDir, EndpointBinary: opts.EndpointBinary, EndpointVersion: opts.EndpointVersion,
 		UIListen: opts.UIListen, MetricsURL: opts.MetricsURL,
-		ProbeListen: opts.ProbeListen, StartTimeout: opts.StartTimeout,
+		ProbeListen: opts.ProbeListen, HTTP01Listen: opts.HTTP01Listen, StartTimeout: opts.StartTimeout,
 		StopTimeout: opts.StopTimeout, Version: version, Commit: commit,
+		SessionLifetime: opts.SessionLifetime, RenewalLead: opts.RenewalLead,
+		TrustedProxies: opts.TrustedProxies, ExternalTLS: opts.ExternalTLS,
 	}
 	return app.Run(ctx, cfg, log)
 }

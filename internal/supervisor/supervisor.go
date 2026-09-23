@@ -146,6 +146,17 @@ func (s *Supervisor) MarkReady() {
 	}
 }
 
+func (s *Supervisor) MarkDegraded(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cmd != nil {
+		s.status.State = "degraded"
+		if err != nil {
+			s.status.LastError = sanitize(err.Error())
+		}
+	}
+}
+
 func (s *Supervisor) Reload(ctx context.Context) error {
 	s.mu.Lock()
 	if s.cmd == nil {

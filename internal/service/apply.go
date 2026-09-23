@@ -83,9 +83,15 @@ func (m *ApplyManager) Apply(ctx context.Context, snapshot domain.Snapshot, acti
 	if err != nil {
 		fileErr := m.files.Rollback()
 		dbErr := m.repo.SetActiveRevision(ctx, old)
+		var processErr error
+		if action == "restart" {
+			processErr = m.process.Restart(ctx, old)
+		} else if action == "sighup" {
+			processErr = m.process.Reload(ctx)
+		}
 		_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: revision, Kind: "config", Action: action, Result: "rollback", Error: sanitizeError(err)})
-		if fileErr != nil || dbErr != nil {
-			return "", fmt.Errorf("apply: %w; rollback files=%v db=%v", err, fileErr, dbErr)
+		if fileErr != nil || dbErr != nil || processErr != nil {
+			return "", fmt.Errorf("apply: %w; rollback files=%v db=%v process=%v", err, fileErr, dbErr, processErr)
 		}
 		return "", err
 	}

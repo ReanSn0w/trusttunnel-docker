@@ -12,6 +12,11 @@ type tlsSettingsRepo struct {
 	empty bool
 }
 
+func (r *tlsSettingsRepo) SetHostname(_ context.Context, hostname string) error {
+	r.m.Hostname = hostname
+	return nil
+}
+
 func (r *tlsSettingsRepo) LoadTLSMetadata(context.Context) (certificate.Metadata, error) {
 	if r.empty {
 		return certificate.Metadata{}, sql.ErrNoRows

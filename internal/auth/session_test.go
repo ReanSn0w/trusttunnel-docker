@@ -82,6 +82,22 @@ func TestSessionLifecycleAndRotation(t *testing.T) {
 		t.Fatalf("expired err=%v", err)
 	}
 }
+
+func TestDeleteAdminInvalidatesAllSessions(t *testing.T) {
+	hash, _ := HashPassword("Correct-Horse-9!")
+	repo := &sessionRepo{admin: Admin{ID: 1, Username: "admin", PasswordHash: hash}}
+	svc := NewSessionService(repo, time.Hour)
+	sess, err := svc.Login(context.Background(), "admin", "Correct-Horse-9!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.DeleteAdmin(context.Background(), sess.Token, "Correct-Horse-9!"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Authenticate(context.Background(), sess.Token); err != ErrInvalidSession {
+		t.Fatalf("session survived admin deletion: %v", err)
+	}
+}
 func keySet(m map[string]time.Time) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

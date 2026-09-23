@@ -11,10 +11,18 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/reansnow/trusttunnel-controller/internal/auth"
+	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/config"
+	"github.com/reansnow/trusttunnel-controller/internal/domain"
+	"github.com/reansnow/trusttunnel-controller/internal/endpointcli"
+	"github.com/reansnow/trusttunnel-controller/internal/logbuffer"
+	"github.com/reansnow/trusttunnel-controller/internal/metrics"
 	"github.com/reansnow/trusttunnel-controller/internal/persistence"
 	"github.com/reansnow/trusttunnel-controller/internal/probe"
+	"github.com/reansnow/trusttunnel-controller/internal/service"
 	"github.com/reansnow/trusttunnel-controller/internal/supervisor"
+	"github.com/reansnow/trusttunnel-controller/internal/webui"
 )
 
 type Logger interface {
@@ -22,16 +30,18 @@ type Logger interface {
 }
 
 type Config struct {
-	DataDir, EndpointBinary, UIListen, MetricsURL, ProbeListen string
-	StartTimeout, StopTimeout                                  time.Duration
-	Version, Commit                                            string
+	DataDir, EndpointBinary, EndpointVersion, UIListen, MetricsURL, ProbeListen, HTTP01Listen string
+	StartTimeout, StopTimeout, SessionLifetime, RenewalLead                                   time.Duration
+	Version, Commit                                                                           string
+	TrustedProxies                                                                            []string
+	ExternalTLS                                                                               bool
 }
 
 func (c Config) Validate() error {
 	if !filepath.IsAbs(c.DataDir) || !filepath.IsAbs(c.EndpointBinary) {
 		return fmt.Errorf("data-dir and endpoint-binary must be absolute")
 	}
-	for label, addr := range map[string]string{"ui-listen": c.UIListen, "probe-listen": c.ProbeListen} {
+	for label, addr := range map[string]string{"ui-listen": c.UIListen, "probe-listen": c.ProbeListen, "http01-listen": c.HTTP01Listen} {
 		if _, _, err := net.SplitHostPort(addr); err != nil {
 			return fmt.Errorf("%s: %w", label, err)
 		}
@@ -58,12 +68,14 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 		return fmt.Errorf("open state: %w", err)
 	}
 	defer store.Close()
+	controllerLogs := logbuffer.New(256 << 10)
+	runtimeLog := teeLogger{primary: log, buffer: controllerLogs}
 	materializer, err := config.NewMaterializer(filepath.Join(cfg.DataDir, "config"), validateStaged)
 	if err != nil {
 		return fmt.Errorf("config materializer: %w", err)
 	}
 	proc, err := supervisor.New(supervisor.Config{
-		Binary: cfg.EndpointBinary, WorkingDir: filepath.Join(cfg.DataDir, "config", "current"), StopTimeout: cfg.StopTimeout,
+		Binary: cfg.EndpointBinary, WorkingDir: filepath.Join(cfg.DataDir, "config", "current"), StopTimeout: cfg.StopTimeout, Version: cfg.EndpointVersion,
 		Args: func(revision string) []string {
 			dir := filepath.Join(cfg.DataDir, "config", "revisions", revision)
 			return []string{filepath.Join(dir, "vpn.toml"), filepath.Join(dir, "hosts.toml")}
@@ -72,14 +84,59 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	if err != nil {
 		return err
 	}
+	readyProc := &readinessProcess{process: proc, store: store, timeout: cfg.StartTimeout}
+	applyManager := service.NewApplyManager(store, materializer, readyProc)
+	userManager := service.NewUserManager(store, applyManager)
+	exporter, err := endpointcli.New(cfg.EndpointBinary, filepath.Join(cfg.DataDir, "config", "current", "vpn.toml"), filepath.Join(cfg.DataDir, "config", "current", "hosts.toml"), 10*time.Second, 1<<20, 2)
+	if err != nil {
+		return err
+	}
+	clientConfigs := service.NewClientConfigService(store, exporter, proc)
+	tlsStore, err := certificate.NewTLSStore(filepath.Join(cfg.DataDir, "tls"))
+	if err != nil {
+		return err
+	}
+	tlsCoordinator := service.NewTLSCoordinator(store, tlsStore, materializer, readyProc, nil)
+	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
+	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
+	tlsSettings := service.NewTLSSettingsService(store, certificateManager)
+	renewal := certificate.NewScheduler(store, certificateManager.Renew, cfg.RenewalLead)
+	if err = renewal.Start(ctx); err != nil {
+		return err
+	}
+
+	bootstrapService := auth.NewBootstrapService(store)
+	sessionService := auth.NewSessionService(store, cfg.SessionLifetime)
+	authHandler, err := webui.NewAuthHandler(sessionService, nil, cfg.TrustedProxies, true)
+	if err != nil {
+		return fmt.Errorf("trusted proxies: %w", err)
+	}
+	router := webui.NewRouter(webui.RouterDependencies{
+		Bootstrap: bootstrapService, Auth: authHandler,
+		Dashboard: webui.NewDashboardHandler(proc, metrics.New(cfg.MetricsURL, 2*time.Second, 256<<10), store),
+		Users:     webui.NewUsersHandler(userManager), Clients: webui.NewClientConfigHandler(clientConfigs),
+		TLS: webui.NewTLSHandler(tlsSettings), Events: webui.NewEventsHandler(store, proc, controllerLogs),
+		CSRF: webui.NewCSRF(true), Logger: runtimeLog, ExternalTLS: cfg.ExternalTLS,
+	})
 	probeServer := &http.Server{Addr: cfg.ProbeListen, Handler: probe.New(store, proc, materializer, cfg.Version), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
-	listener, err := net.Listen("tcp", cfg.ProbeListen)
+	uiServer := &http.Server{Addr: cfg.UIListen, Handler: router, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	probeListener, err := net.Listen("tcp", cfg.ProbeListen)
 	if err != nil {
 		return fmt.Errorf("probe listener: %w", err)
 	}
-	serverErr := make(chan error, 1)
+	uiListener, err := net.Listen("tcp", cfg.UIListen)
+	if err != nil {
+		_ = probeListener.Close()
+		return fmt.Errorf("UI listener: %w", err)
+	}
+	serverErr := make(chan error, 2)
 	go func() {
-		if serveErr := probeServer.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		if serveErr := probeServer.Serve(probeListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			serverErr <- serveErr
+		}
+	}()
+	go func() {
+		if serveErr := uiServer.Serve(uiListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			serverErr <- serveErr
 		}
 	}()
@@ -100,26 +157,70 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 		if err = store.SetActiveRevision(ctx, revision); err != nil {
 			return err
 		}
-		if err = proc.Start(ctx, revision); err != nil {
-			return fmt.Errorf("start endpoint: %w", err)
+		if err = readyProc.Restart(ctx, revision); err != nil {
+			runtimeLog.Logf("endpoint startup degraded: %v", err)
 		}
-		if err = waitTCP(ctx, snapshot.ListenAddress, cfg.StartTimeout); err != nil {
-			_ = proc.Stop(context.Background())
-			return fmt.Errorf("endpoint readiness: %w", err)
-		}
-		proc.MarkReady()
 	}
-	log.Logf("controller started version=%s commit=%s", cfg.Version, cfg.Commit)
+	runtimeLog.Logf("controller started version=%s commit=%s", cfg.Version, cfg.Commit)
 	select {
 	case <-ctx.Done():
 	case err = <-serverErr:
 		return err
 	}
-	log.Logf("controller stopping")
+	runtimeLog.Logf("controller stopping")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.StopTimeout)
 	defer cancel()
+	_ = renewal.Stop(shutdownCtx)
+	_ = http01.Shutdown(shutdownCtx)
+	_ = uiServer.Shutdown(shutdownCtx)
 	_ = probeServer.Shutdown(shutdownCtx)
 	return proc.Stop(shutdownCtx)
+}
+
+type teeLogger struct {
+	primary Logger
+	buffer  *logbuffer.Ring
+}
+
+func (l teeLogger) Logf(format string, args ...interface{}) {
+	if l.primary != nil {
+		l.primary.Logf(format, args...)
+	}
+	l.buffer.Logf(format, args...)
+}
+
+type snapshotStore interface {
+	Snapshot(context.Context) (domain.Snapshot, error)
+}
+type readinessProcess struct {
+	process *supervisor.Supervisor
+	store   snapshotStore
+	timeout time.Duration
+}
+
+func (p *readinessProcess) Restart(ctx context.Context, revision string) error {
+	if err := p.process.Restart(ctx, revision); err != nil {
+		return err
+	}
+	return p.ready(ctx)
+}
+func (p *readinessProcess) Reload(ctx context.Context) error {
+	if err := p.process.Reload(ctx); err != nil {
+		return err
+	}
+	return p.ready(ctx)
+}
+func (p *readinessProcess) ready(ctx context.Context) error {
+	snapshot, err := p.store.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if err = waitTCP(ctx, snapshot.ListenAddress, p.timeout); err != nil {
+		p.process.MarkDegraded(err)
+		return err
+	}
+	p.process.MarkReady()
+	return nil
 }
 
 func validateStaged(dir string) error {
