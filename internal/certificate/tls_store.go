@@ -116,6 +116,12 @@ func (s *TLSStore) Rollback(ctx context.Context) error {
 	}
 	previous, err := os.Readlink(filepath.Join(s.root, "previous"))
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if removeErr := os.Remove(filepath.Join(s.root, "current")); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+				return removeErr
+			}
+			return syncTLSDir(s.root)
+		}
 		return fmt.Errorf("no previous TLS revision: %w", err)
 	}
 	current, err := os.Readlink(filepath.Join(s.root, "current"))
