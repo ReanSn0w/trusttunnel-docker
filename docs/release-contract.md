@@ -1,6 +1,6 @@
 # Release contract
 
-The production image is `ghcr.io/reansnow/trusttunnel-controller` and is
+The production image is `ghcr.io/reansn0w/trusttunnel-controller` and is
 published as one OCI manifest containing `linux/amd64` and `linux/arm64`.
 
 Release tags are immutable:

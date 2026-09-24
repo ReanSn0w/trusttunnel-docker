@@ -16,7 +16,7 @@ Restore only into an empty, separate volume:
 docker run --rm \
   -v "$PWD/backups:/backups:ro" \
   -v trusttunnel_restore_test:/var/lib/trusttunnel \
-  ghcr.io/reansnow/trusttunnel-controller@sha256:NEW_DIGEST \
+  ghcr.io/reansn0w/trusttunnel-controller@sha256:NEW_DIGEST \
   --restore-backup /backups/trusttunnel-TIMESTAMP.tar.gz
 ```
 
