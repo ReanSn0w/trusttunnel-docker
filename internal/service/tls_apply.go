@@ -78,6 +78,14 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 		_ = c.configs.Rollback()
 		return certificate.Published{}, err
 	}
+	// Before the first VPN user exists there is intentionally no endpoint
+	// process to reload. Keep the verified certificate and rendered config; the
+	// user creation path will start the endpoint with this revision later.
+	if len(snapshot.Users) == 0 {
+		rollbackTLS = false
+		_ = c.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: configRevision, Kind: "tls", Action: "deferred", Result: "success"})
+		return published, nil
+	}
 	if err = c.process.Reload(ctx); err == nil {
 		err = c.ready(ctx)
 	}
