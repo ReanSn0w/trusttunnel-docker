@@ -1,7 +1,7 @@
 services:
   trusttunnel:
     # Не используйте latest: обновляйте только на проверенный immutable release tag/digest.
-    image: ${TRUSTTUNNEL_IMAGE:-ghcr.io/reansn0w/trusttunnel-controller:v0.1.4}
+    image: ${TRUSTTUNNEL_IMAGE:-ghcr.io/reansn0w/trusttunnel-controller:v0.1.5}
     restart: unless-stopped
     init: false
     stop_grace_period: 20s

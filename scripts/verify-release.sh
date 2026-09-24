@@ -12,11 +12,13 @@ for platform in linux/amd64 linux/arm64; do
   image="$(docker buildx imagetools inspect "$ref" --format "{{json (index .Image \"$platform\")}}")"
   sbom="$(docker buildx imagetools inspect "$ref" --format "{{json (index .SBOM \"$platform\").SPDX}}")"
   provenance="$(docker buildx imagetools inspect "$ref" --format "{{json (index .Provenance \"$platform\").SLSA}}")"
-  printf '%s' "$image" | grep -q 'io.trusttunnel.controller.version'
-  printf '%s' "$image" | grep -q 'io.trusttunnel.endpoint.version'
-  printf '%s' "$image" | grep -q 'io.trusttunnel.endpoint.sha256'
-  printf '%s' "$image" | grep -q 'org.opencontainers.image.revision'
-  printf '%s' "$sbom" | grep -q 'SPDXRef-DOCUMENT'
-  printf '%s' "$provenance" | grep -q 'mobyproject.org/buildkit'
+  # Do not use grep -q here. These JSON documents can be large; grep -q exits
+  # after the first match and leaves printf writing to a closed pipe (EPIPE).
+  printf '%s' "$image" | grep -F 'io.trusttunnel.controller.version' >/dev/null
+  printf '%s' "$image" | grep -F 'io.trusttunnel.endpoint.version' >/dev/null
+  printf '%s' "$image" | grep -F 'io.trusttunnel.endpoint.sha256' >/dev/null
+  printf '%s' "$image" | grep -F 'org.opencontainers.image.revision' >/dev/null
+  printf '%s' "$sbom" | grep -F 'SPDXRef-DOCUMENT' >/dev/null
+  printf '%s' "$provenance" | grep -F 'mobyproject.org/buildkit' >/dev/null
   docker run --rm --platform "$platform" "$ref" --version
 done
