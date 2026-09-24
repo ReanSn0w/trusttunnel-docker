@@ -2,7 +2,10 @@ name: release
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    branches:
+      - master
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: read
@@ -13,28 +16,26 @@ env:
   IMAGE: ghcr.io/reansn0w/trusttunnel-controller
 
 jobs:
-  platform:
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            platform: linux/amd64
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+  test:
+    name: Test and scan amd64
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@v3.11.1
-      - name: Build native scan candidate
+      - name: Run tests from Dockerfile
         uses: docker/build-push-action@v6.18.0
         with:
           context: .
-          platforms: ${{ matrix.platform }}
+          target: test
+          platforms: linux/amd64
+          push: false
+      - name: Build scan candidate
+        uses: docker/build-push-action@v6.18.0
+        with:
+          context: .
+          platforms: linux/amd64
           load: true
           push: false
           tags: trusttunnel-controller:scan
@@ -49,60 +50,48 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: HIGH,CRITICAL
-      - uses: docker/login-action@v3.5.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish native platform image with attestations
-        uses: docker/build-push-action@v6.18.0
-        with:
-          context: .
-          platforms: ${{ matrix.platform }}
-          push: true
-          tags: ${{ env.IMAGE }}:build-${{ github.sha }}-${{ matrix.arch }}
-          sbom: true
-          provenance: mode=max
-          build-args: |
-            CONTROLLER_VERSION=${{ github.ref_name }}
-            VCS_REF=${{ github.sha }}
 
-  manifest:
-    needs: platform
+  publish:
+    name: Publish amd64
+    needs: test
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
-      - uses: docker/login-action@v3.5.0
+      - uses: docker/setup-buildx-action@v3.11.1
+      - name: Generate image tags
+        id: meta
+        uses: docker/metadata-action@v5.8.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+      - name: Login to GHCR
+        uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.10.0
-      - name: Verify candidate and publish immutable multi-arch manifest
+      - name: Build and publish
+        id: build
+        uses: docker/build-push-action@v6.18.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+          build-args: |
+            CONTROLLER_VERSION=${{ github.ref_name }}
+            VCS_REF=${{ github.sha }}
+      - name: Sign and verify
         env:
-          VERSION: ${{ github.ref_name }}
-          REVISION: ${{ github.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          set -eu
-          short_sha="$(printf '%s' "$REVISION" | cut -c1-12)"
-          docker buildx imagetools create \
-            --tag "$IMAGE:candidate-$REVISION" \
-            "$IMAGE:build-$REVISION-amd64" \
-            "$IMAGE:build-$REVISION-arm64"
-          digest="$(docker buildx imagetools inspect "$IMAGE:candidate-$REVISION" --format '{{json .Manifest.Digest}}' | tr -d '"')"
-          cosign sign --yes "$IMAGE@$digest"
-          ./scripts/verify-release.sh "$IMAGE@$digest"
-          if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-            echo "release tag already exists: $IMAGE:$VERSION" >&2
-            exit 1
-          fi
-          if docker buildx imagetools inspect "$IMAGE:sha-$short_sha" >/dev/null 2>&1; then
-            echo "commit tag already exists: $IMAGE:sha-$short_sha" >&2
-            exit 1
-          fi
-          docker buildx imagetools create \
-            --tag "$IMAGE:$VERSION" \
-            --tag "$IMAGE:sha-$short_sha" \
-            "$IMAGE@$digest"
+          cosign sign --yes "$IMAGE@$DIGEST"
+          ./scripts/verify-release.sh "$IMAGE@$DIGEST"

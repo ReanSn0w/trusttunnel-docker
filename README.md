@@ -10,7 +10,7 @@ administrator UI; the official endpoint binary remains the VPN data plane.
    TCP 443 and UDP 443 reachable; the reverse-proxy example publishes the admin
    UI over HTTPS on TCP 8444 by default.
 2. Copy `.env.example` to `.env` and replace `TRUSTTUNNEL_IMAGE` with the
-   verified immutable manifest digest from the release.
+   immutable image digest from the release.
 3. Validate and start:
 
    ```sh
