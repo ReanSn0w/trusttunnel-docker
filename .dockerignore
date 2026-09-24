@@ -1,6 +1,7 @@
 .git
 .env
 .env.*
+secrets
 plans
 docs
 Dockerfile.prebuilt

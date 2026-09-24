@@ -7,8 +7,8 @@ administrator UI; the official endpoint binary remains the VPN data plane.
 ## Minimal production start
 
 1. Point the VPN hostname's public A/AAAA record at the server. Make TCP 80,
-   TCP 443 and UDP 443 reachable; reserve a separate hostname/IP for the admin
-   UI if the reverse-proxy example is used.
+   TCP 443 and UDP 443 reachable; the reverse-proxy example publishes the admin
+   UI over HTTPS on TCP 8444 by default.
 2. Copy `.env.example` to `.env` and replace `TRUSTTUNNEL_IMAGE` with the
    verified immutable manifest digest from the release.
 3. Validate and start:

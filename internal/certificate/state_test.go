@@ -3,7 +3,7 @@ package certificate
 import "testing"
 
 func TestStateTransitions(t *testing.T) {
-	valid := [][2]State{{Unconfigured, Issuing}, {Issuing, Active}, {Active, Renewing}, {Renewing, Degraded}, {Degraded, Renewing}, {Active, Manual}, {Manual, Issuing}}
+	valid := [][2]State{{Unconfigured, Issuing}, {Issuing, Active}, {Active, Renewing}, {Renewing, Degraded}, {Degraded, Issuing}, {Degraded, Renewing}, {Active, Manual}, {Manual, Issuing}}
 	for _, p := range valid {
 		if !CanTransition(p[0], p[1]) {
 			t.Fatalf("expected %s -> %s", p[0], p[1])

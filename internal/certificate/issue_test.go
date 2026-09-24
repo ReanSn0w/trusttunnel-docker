@@ -128,6 +128,19 @@ func TestManagerIssue(t *testing.T) {
 	}
 }
 
+func TestManagerIssueRetriesFromDegraded(t *testing.T) {
+	repo := &certRepo{m: Metadata{State: Degraded, Mode: Production, Email: "admin@example.net", Hostname: "vpn.example.net", LastError: "previous issue failed"}}
+	bundle := makeBundle(t, "vpn.example.net", "Production CA")
+	m := NewManager(repo, fakePublisher{}, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) { return fakeACME{bundle}, nil })
+	got, err := m.Issue(context.Background(), Production, "admin@example.net", "vpn.example.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != Active || got.LastError != "" || got.ActiveRevision != "tls-r1" {
+		t.Fatalf("metadata=%#v", got)
+	}
+}
+
 func TestManagerRenew(t *testing.T) {
 	bundle := makeBundle(t, "vpn.example.net", "Production CA")
 	repo := &certRepo{m: Metadata{State: Active, Mode: Production, Email: "admin@example.net", Hostname: "vpn.example.net", RegistrationURI: "account-uri", ActiveRevision: "tls-old"}}

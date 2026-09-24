@@ -43,7 +43,7 @@ func CanTransition(from, to State) bool {
 		Issuing:      {Active: true, Degraded: true},
 		Active:       {Renewing: true, Manual: true},
 		Renewing:     {Active: true, Degraded: true},
-		Degraded:     {Renewing: true, Active: true, Manual: true},
+		Degraded:     {Issuing: true, Renewing: true, Active: true, Manual: true},
 		Manual:       {Issuing: true, Manual: true},
 	}
 	return from == to || allowed[from][to]

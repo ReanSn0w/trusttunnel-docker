@@ -1,4 +1,4 @@
-# Опциональный UI reverse proxy. Требует отдельный host IP и готовые TLS-файлы.
+# Опциональный HTTPS reverse proxy для UI. Требует готовые TLS-файлы.
 services:
   trusttunnel:
     environment:
@@ -12,12 +12,12 @@ services:
     image: nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284
     restart: unless-stopped
     ports:
-      # Отдельный IP для admin hostname; VPN 443 остаётся у TrustTunnel.
-      - "${TT_ADMIN_BIND_IP:?Set a dedicated admin IP}:443:443/tcp"
+      # VPN уже занимает host TCP 443, поэтому UI публикуется на отдельном порту.
+      - "${TT_ADMIN_PORT:-8444}:443/tcp"
     volumes:
-      - ./deploy/nginx-admin.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./secrets/admin.crt:/run/secrets/admin.crt:ro
-      - ./secrets/admin.key:/run/secrets/admin.key:ro
+      - ./deploy/nginx-admin.conf:/etc/nginx/conf.d/default.conf:ro,Z
+      - ./secrets/admin.crt:/run/secrets/admin.crt:ro,Z
+      - ./secrets/admin.key:/run/secrets/admin.key:ro,Z
     networks:
       admin:
         ipv4_address: 172.31.250.2
@@ -37,7 +37,10 @@ services:
 
 networks:
   admin:
-    internal: true
+    # Podman disables bridge IP forwarding for internal networks, including
+    # published ports. The base stack keeps this network internal; this HTTPS
+    # publishing override intentionally enables forwarding.
+    internal: false
     ipam:
       config:
         - subnet: 172.31.250.0/29
