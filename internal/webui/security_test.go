@@ -37,9 +37,9 @@ func TestSecurityHeadersRequestIDAndBodyLimit(t *testing.T) {
 			http.Error(w, "too large", http.StatusRequestEntityTooLarge)
 		}
 	})
-	h := SecurityMiddleware(nil, true, 4, next)
+	h := SecurityMiddleware(nil, 4, next)
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader("oversized")))
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "https://vpn.example.net/", strings.NewReader("oversized")))
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("code=%d", w.Code)
 	}
@@ -52,7 +52,7 @@ func TestSecurityHeadersRequestIDAndBodyLimit(t *testing.T) {
 
 func TestDirectLoopbackOmitsHSTS(t *testing.T) {
 	w := httptest.NewRecorder()
-	SecurityMiddleware(nil, false, 1024, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
+	SecurityMiddleware(nil, 1024, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
 	if w.Header().Get("Strict-Transport-Security") != "" {
 		t.Fatal("HSTS set for direct HTTP")
 	}

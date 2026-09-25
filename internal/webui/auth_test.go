@@ -34,10 +34,7 @@ func (s *webSessionStub) ChangePassword(_ context.Context, _ string, current, _ 
 }
 func TestLoginCookieUniformErrorAndNoOpenRedirect(t *testing.T) {
 	svc := &webSessionStub{}
-	h, err := NewAuthHandler(svc, nil, nil, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := NewAuthHandler(svc, nil)
 	for _, user := range []string{"missing", "admin"} {
 		body := "username=" + user + "&password=wrong"
 		r := httptest.NewRequest(http.MethodPost, "/login?next=https://evil.example", strings.NewReader(body))
@@ -48,10 +45,7 @@ func TestLoginCookieUniformErrorAndNoOpenRedirect(t *testing.T) {
 			t.Fatalf("enumerating response for %s", user)
 		}
 	}
-	h, err = NewAuthHandler(svc, nil, nil, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h = NewAuthHandler(svc, nil)
 	r := httptest.NewRequest(http.MethodPost, "/login?next=https://evil.example", strings.NewReader("username=admin&password=Correct-Horse-9%21"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -65,7 +59,7 @@ func TestLoginCookieUniformErrorAndNoOpenRedirect(t *testing.T) {
 	}
 }
 func TestForgedProxyHeaderIgnored(t *testing.T) {
-	h, _ := NewAuthHandler(&webSessionStub{}, nil, []string{"10.0.0.0/8"}, true)
+	h := NewAuthHandler(&webSessionStub{}, nil)
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "203.0.113.4:1234"
 	r.Header.Set("X-Forwarded-For", "1.2.3.4")
@@ -73,14 +67,14 @@ func TestForgedProxyHeaderIgnored(t *testing.T) {
 		t.Fatalf("trusted forged header: %s", got)
 	}
 	r.RemoteAddr = "10.0.0.2:1234"
-	if got := h.clientIP(r); got != "1.2.3.4" {
-		t.Fatalf("ignored trusted proxy: %s", got)
+	if got := h.clientIP(r); got != "10.0.0.2" {
+		t.Fatalf("trusted forwarded header: %s", got)
 	}
 }
 
 func TestLogoutRevokesSessionAndClearsCookie(t *testing.T) {
 	svc := &webSessionStub{}
-	h, _ := NewAuthHandler(svc, nil, nil, true)
+	h := NewAuthHandler(svc, nil)
 	r := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: "session"})
 	w := httptest.NewRecorder()
@@ -95,7 +89,7 @@ func TestLogoutRevokesSessionAndClearsCookie(t *testing.T) {
 }
 
 func TestPasswordRotationSetsNewSession(t *testing.T) {
-	h, _ := NewAuthHandler(&webSessionStub{}, nil, nil, true)
+	h := NewAuthHandler(&webSessionStub{}, nil)
 	r := httptest.NewRequest(http.MethodPost, "/account/password", strings.NewReader("current_password=Correct-Horse-9%21&new_password=New-Correct-Horse-8%21"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: "old-session"})

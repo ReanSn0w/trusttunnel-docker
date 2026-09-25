@@ -30,44 +30,50 @@ func NewLoginLimiter(window time.Duration, maxEntries int) *LoginLimiter {
 func loginKey(ip, username string) string {
 	return strings.ToLower(strings.TrimSpace(username)) + "\x00" + ip
 }
+func accountKey(username string) string {
+	return "\x01" + strings.ToLower(strings.TrimSpace(username))
+}
 func (l *LoginLimiter) Allow(ip, username string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	key := loginKey(ip, username)
-	a, ok := l.entries[key]
-	if !ok || now.Sub(a.windowStart) >= l.window {
-		return true, 0
+	var wait time.Duration
+	for _, key := range []string{loginKey(ip, username), accountKey(username)} {
+		a, ok := l.entries[key]
+		if ok && now.Sub(a.windowStart) < l.window && now.Before(a.next) {
+			if remaining := a.next.Sub(now); remaining > wait {
+				wait = remaining
+			}
+		}
 	}
-	if now.Before(a.next) {
-		return false, a.next.Sub(now)
-	}
-	return true, 0
+	return wait == 0, wait
 }
 func (l *LoginLimiter) Failure(ip, username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	key := loginKey(ip, username)
-	a := l.entries[key]
-	if a.windowStart.IsZero() || now.Sub(a.windowStart) >= l.window {
-		a = attempt{windowStart: now}
+	for _, key := range []string{loginKey(ip, username), accountKey(username)} {
+		a := l.entries[key]
+		if a.windowStart.IsZero() || now.Sub(a.windowStart) >= l.window {
+			a = attempt{windowStart: now}
+		}
+		a.failures++
+		a.seen = now
+		shift := a.failures - 1
+		if shift > 5 {
+			shift = 5
+		}
+		a.next = now.Add(250 * time.Millisecond * time.Duration(1<<shift))
+		l.entries[key] = a
 	}
-	a.failures++
-	a.seen = now
-	shift := a.failures - 1
-	if shift > 5 {
-		shift = 5
-	}
-	a.next = now.Add(250 * time.Millisecond * time.Duration(1<<shift))
-	l.entries[key] = a
-	if len(l.entries) > l.maxEntries {
+	for len(l.entries) > l.maxEntries {
 		l.evictOldest()
 	}
 }
 func (l *LoginLimiter) Success(ip, username string) {
 	l.mu.Lock()
 	delete(l.entries, loginKey(ip, username))
+	delete(l.entries, accountKey(username))
 	l.mu.Unlock()
 }
 func (l *LoginLimiter) evictOldest() {

@@ -148,17 +148,14 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 
 	bootstrapService := auth.NewBootstrapService(store)
 	sessionService := auth.NewSessionService(store, cfg.SessionLifetime)
-	authHandler, err := webui.NewAuthHandler(sessionService, nil, nil, true)
-	if err != nil {
-		return fmt.Errorf("trusted proxies: %w", err)
-	}
+	authHandler := webui.NewAuthHandler(sessionService, nil)
 	router := webui.NewRouter(webui.RouterDependencies{
 		Bootstrap: bootstrapService, Auth: authHandler,
 		Dashboard: webui.NewDashboardHandler(proc, metrics.New(cfg.MetricsURL, 2*time.Second, 256<<10), store),
 		Users:     webui.NewUsersHandler(userManager), Clients: webui.NewClientConfigHandler(clientConfigs),
 		Connection: webui.NewConnectionHandler(store),
 		TLS:        webui.NewTLSHandler(tlsSettings), Events: webui.NewEventsHandler(store, proc, controllerLogs),
-		CSRF: webui.NewCSRF(true), Logger: runtimeLog, ExternalTLS: true,
+		CSRF: webui.NewCSRF(true), Logger: runtimeLog,
 	})
 	probeServer := &http.Server{Addr: cfg.ProbeListen, Handler: probe.New(store, proc, materializer, cfg.Version), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
 	uiServer := &http.Server{Addr: cfg.UIListen, Handler: router, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
