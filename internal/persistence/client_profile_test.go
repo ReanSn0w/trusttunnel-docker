@@ -56,8 +56,10 @@ func TestClientProfilePersists(t *testing.T) {
 	if err != nil || p != clientprofile.Default() {
 		t.Fatalf("defaults=%+v err=%v", p, err)
 	}
-	p.PublicAddress = "vpn.example.com:1443"
+	p.PublicAddress = "127.0.0.1:18443"
 	p.AntiDPI = true
+	p.IPv6 = false
+	p.TLSProfile = "safari"
 	p.PostQuantum = false
 	if err = s.SaveClientProfile(ctx, p); err != nil {
 		t.Fatal(err)
@@ -73,6 +75,9 @@ func TestClientProfilePersists(t *testing.T) {
 	got, err := s.LoadClientProfile(ctx)
 	if err != nil || got != p {
 		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if address, err := got.Address("vpn.example.com"); err != nil || address != "127.0.0.1:18443" {
+		t.Fatalf("manual smoke address=%q err=%v", address, err)
 	}
 	invalid := p
 	invalid.Protocol = "http3"

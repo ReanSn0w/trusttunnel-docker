@@ -35,7 +35,16 @@ ClientHello that never fully reaches the server.
 
 `TOML` downloads the endpoint section; `CLI TOML` downloads a complete native
 configuration with TUN listener and top-level `post_quantum_group_enabled`.
-Use a current native CLI supporting `tls_profile`:
+The released native CLI [v1.1.7](https://github.com/TrustTunnel/TrustTunnelClient/releases/tag/v1.1.7)
+documents `post_quantum_group_enabled`, `anti_dpi`, `upstream_protocol`, IPv6,
+credentials and certificate fields, but its tagged
+[configuration reference](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.1.7/trusttunnel/README.md)
+does not contain `tls_profile`. The field appears in the
+[unreleased changelog](https://github.com/TrustTunnel/TrustTunnelClient/blob/def663d06e7d6e99e024702ac45e0cad6749e32d/CHANGELOG.md)
+and source commit `def663d`. No released minimum version for the complete CLI
+TOML has been verified. Use a compatible source build for TLS fingerprint
+selection; the other settings can be checked against v1.1.7. To run a compatible
+native client:
 
 ```sh
 sudo trusttunnel_client -c trusttunnel-client.toml
