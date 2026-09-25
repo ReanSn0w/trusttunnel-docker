@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/clientprofile"
 	"path/filepath"
 	"testing"
@@ -27,6 +28,9 @@ func TestClientProfileMigrationFromV3(t *testing.T) {
 	if _, err = db.ExecContext(ctx, `INSERT INTO vpn_users(username,credential,status,created_at,updated_at) VALUES('existing','preserve','active','','')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO tls_certificate(id,state,mode,hostname,active_revision,certificate_path,private_key_path,updated_at) VALUES(1,'manual','manual','vpn.example.com','tls-v3','/data/cert.pem','/data/key.pem','2026-09-24T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +47,10 @@ func TestClientProfileMigrationFromV3(t *testing.T) {
 	if err != nil || u.Credential != "preserve" {
 		t.Fatal("migration lost user")
 	}
+	m, err := s.LoadTLSMetadata(ctx)
+	if err != nil || m.Source != certificate.Provided || m.State != certificate.Active || m.ActiveRevision != "tls-v3" || m.CertificatePath != "/data/cert.pem" || m.PrivateKeyPath != "/data/key.pem" {
+		t.Fatalf("migration lost TLS metadata: %+v err=%v", m, err)
+	}
 }
 
 func TestClientProfilePersists(t *testing.T) {
@@ -56,8 +64,10 @@ func TestClientProfilePersists(t *testing.T) {
 	if err != nil || p != clientprofile.Default() {
 		t.Fatalf("defaults=%+v err=%v", p, err)
 	}
-	p.PublicAddress = "vpn.example.com:1443"
+	p.PublicAddress = "127.0.0.1:18443"
 	p.AntiDPI = true
+	p.IPv6 = false
+	p.TLSProfile = "safari"
 	p.PostQuantum = false
 	if err = s.SaveClientProfile(ctx, p); err != nil {
 		t.Fatal(err)
@@ -73,6 +83,9 @@ func TestClientProfilePersists(t *testing.T) {
 	got, err := s.LoadClientProfile(ctx)
 	if err != nil || got != p {
 		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if address, err := got.Address("vpn.example.com"); err != nil || address != "127.0.0.1:18443" {
+		t.Fatalf("manual smoke address=%q err=%v", address, err)
 	}
 	invalid := p
 	invalid.Protocol = "http3"

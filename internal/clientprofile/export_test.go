@@ -89,6 +89,34 @@ func TestAntiDPIAndMalformedLinks(t *testing.T) {
 	}
 }
 
+func TestApplyDoesNotInventVerificationBypass(t *testing.T) {
+	cfg, err := Apply(domain.ClientConfig{
+		DeepLink: "tt://?" + base64.RawURLEncoding.EncodeToString([]byte{1, 1, 'a', 2, 1, 'b', 5, 1, 'u', 6, 1, 'p'}),
+		TOML: `hostname = "vpn.example.com"
+addresses = ["vpn.example.com:443"]
+username = "u"
+password = "p"
+`,
+	}, Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var endpoint map[string]any
+	if _, err = toml.Decode(cfg.TOML, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := endpoint["skip_verification"]; exists {
+		t.Fatal("controller added skip_verification")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(cfg.DeepLink, "tt://?"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte{7, 1, 1}) {
+		t.Fatal("controller added verification-bypass tag")
+	}
+}
+
 func TestSettingsValidation(t *testing.T) {
 	s := Default()
 	if address, err := s.Address("vpn.example.com"); err != nil || address != "vpn.example.com:443" {
