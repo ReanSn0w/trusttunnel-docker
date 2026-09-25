@@ -24,6 +24,9 @@ func (m *Manager) Ensure(ctx context.Context, lead time.Duration) (Metadata, err
 	if current.EffectiveSource() == SelfSigned {
 		return m.ensureSelfSigned(ctx, current, lead)
 	}
+	if current.EffectiveSource() == Provided {
+		return m.ensureProvided(ctx, current)
+	}
 	if current.EffectiveSource() != LetsEncrypt || current.Hostname == "" || current.Email == "" {
 		return current, nil
 	}

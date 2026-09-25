@@ -1,0 +1,8 @@
+services:
+  trusttunnel:
+    environment:
+      TT_TLS_SOURCE: provided
+      TT_TLS_CERTIFICATE_FILE: /run/trusttunnel-provided/cert.pem
+      TT_TLS_KEY_FILE: /run/trusttunnel-provided/key.pem
+    volumes:
+      - ${TT_PROVIDED_TLS_DIR:?set TT_PROVIDED_TLS_DIR to the host PEM directory}:/run/trusttunnel-provided:ro

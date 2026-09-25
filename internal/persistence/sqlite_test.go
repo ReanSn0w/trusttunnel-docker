@@ -40,7 +40,7 @@ func TestMigrationPreservesManualTLSAsProvided(t *testing.T) {
 	}
 	defer store.Close()
 	got, err := store.LoadTLSMetadata(ctx)
-	if err != nil || got.Source != certificate.Provided || got.ActiveRevision != "r1" || got.CertificatePath != "/data/cert.pem" || got.PrivateKeyPath != "/data/key.pem" {
+	if err != nil || got.Source != certificate.Provided || got.State != certificate.Active || got.ActiveRevision != "r1" || got.CertificatePath != "/data/cert.pem" || got.PrivateKeyPath != "/data/key.pem" {
 		t.Fatalf("migrated=%+v err=%v", got, err)
 	}
 }

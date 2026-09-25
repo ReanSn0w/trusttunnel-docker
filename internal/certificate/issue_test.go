@@ -163,7 +163,7 @@ func TestManagerManualImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != Manual || got.Mode != ManualMode || got.ActiveRevision != "tls-r1" {
+	if got.State != Active || got.Source != Provided || got.Mode != ManualMode || got.ActiveRevision != "tls-r1" {
 		t.Fatalf("metadata=%#v", got)
 	}
 }

@@ -114,6 +114,8 @@ ALTER TABLE tls_certificate ADD COLUMN source TEXT NOT NULL DEFAULT 'letsencrypt
 ALTER TABLE tls_certificate ADD COLUMN provided_certificate_path TEXT NOT NULL DEFAULT '';
 ALTER TABLE tls_certificate ADD COLUMN provided_key_path TEXT NOT NULL DEFAULT '';
 UPDATE tls_certificate SET source='provided' WHERE mode='manual' OR state='manual';
+UPDATE tls_certificate SET state='active' WHERE state='manual' AND active_revision<>'';
+UPDATE tls_certificate SET state='unconfigured' WHERE state='manual' AND active_revision='';
 `}
 
 type Store struct{ db *sql.DB }

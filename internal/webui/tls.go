@@ -5,6 +5,7 @@ import (
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"html/template"
 	"net/http"
+	"time"
 )
 
 type TLSService interface {
@@ -26,6 +27,7 @@ type TLSHandler struct {
 type TLSData struct {
 	CSRFToken, Error, Notice string
 	Metadata                 certificate.Metadata
+	Expiring                 bool
 }
 
 func NewTLSHandler(service TLSService) *TLSHandler {
@@ -95,7 +97,8 @@ func (h *TLSHandler) render(w http.ResponseWriter, r *http.Request, message, not
 		message = err.Error()
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = h.tmpl.Execute(w, TLSData{CSRFToken: CSRFToken(r.Context()), Error: message, Notice: notice, Metadata: m})
+	expiring := m.EffectiveSource() == certificate.Provided && !m.NotAfter.IsZero() && time.Until(m.NotAfter) <= 30*24*time.Hour
+	_ = h.tmpl.Execute(w, TLSData{CSRFToken: CSRFToken(r.Context()), Error: message, Notice: notice, Metadata: m, Expiring: expiring})
 }
 func postOnly(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodPost {

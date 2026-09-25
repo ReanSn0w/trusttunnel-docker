@@ -218,7 +218,7 @@ func (m *Manager) ImportManual(ctx context.Context, hostname string, chain, priv
 		return current, err
 	}
 	next := current
-	next.State = Manual
+	next.State = Active
 	next.Source = Provided
 	next.Mode = ManualMode
 	next.Hostname = hostname

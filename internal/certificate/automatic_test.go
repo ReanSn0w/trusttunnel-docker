@@ -67,13 +67,22 @@ func TestEnsureRecoversInterruptedIssue(t *testing.T) {
 }
 
 func TestEnsureLeavesManualCertificateAlone(t *testing.T) {
-	repo := &certRepo{m: Metadata{State: Manual, Mode: ManualMode, Hostname: "vpn.example.net"}}
-	m := NewManager(repo, nil, nil, t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+	ctx := context.Background()
+	store, err := NewTLSStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := store.Publish(ctx, makeBundle(t, "vpn.example.net", "Test CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &certRepo{m: Metadata{State: Manual, Mode: ManualMode, Hostname: "vpn.example.net", ActiveRevision: pair.Revision, CertificatePath: pair.CertificatePath, PrivateKeyPath: pair.PrivateKeyPath}}
+	m := NewManager(repo, store, nil, t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
 		t.Fatal("manual mode called ACME")
 		return nil, nil
 	})
-	got, err := m.Ensure(context.Background(), time.Hour)
-	if err != nil || got.State != Manual {
+	got, err := m.Ensure(ctx, time.Hour)
+	if err != nil || got.State != Active || got.ActiveRevision != pair.Revision {
 		t.Fatalf("manual=%+v err=%v", got, err)
 	}
 }
@@ -86,8 +95,12 @@ func TestEnsureNeverCallsACMEForOtherSources(t *testing.T) {
 				t.Fatal("non-ACME source called ACME")
 				return nil, nil
 			})
-			if _, err := m.Ensure(context.Background(), time.Hour); err != nil {
+			_, err := m.Ensure(context.Background(), time.Hour)
+			if source == SelfSigned && err != nil {
 				t.Fatal(err)
+			}
+			if source == Provided && err == nil {
+				t.Fatal("missing provided pair was accepted")
 			}
 		})
 	}
