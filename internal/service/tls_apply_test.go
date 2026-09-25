@@ -279,12 +279,14 @@ func (s *configStoreStub) Apply(f config.Files) (string, error) {
 func (s *configStoreStub) Rollback() error { s.rolled = true; return s.rollbackErr }
 
 type reloadStub struct {
-	calls    int
-	firstErr error
+	calls     int
+	firstErr  error
+	revisions []string
 }
 
-func (s *reloadStub) Reload(context.Context) error {
+func (s *reloadStub) Restart(_ context.Context, revision string) error {
 	s.calls++
+	s.revisions = append(s.revisions, revision)
 	if s.calls == 1 {
 		return s.firstErr
 	}
@@ -301,7 +303,7 @@ func TestTLSCoordinatorAppliesVerifiedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Revision != "tls-new" || repo.revision != "config-new" || proc.calls != 1 || tlsStore.rolled {
+	if got.Revision != "tls-new" || repo.revision != "config-new" || proc.calls != 1 || proc.revisions[0] != "config-new" || tlsStore.rolled {
 		t.Fatalf("got=%#v repo=%s calls=%d rolled=%v", got, repo.revision, proc.calls, tlsStore.rolled)
 	}
 	if string(configs.files["hosts.toml"]) == "" {
@@ -332,7 +334,7 @@ func TestTLSCoordinatorRollsBackAndReloadsPrevious(t *testing.T) {
 	repo := &tlsRepoStub{revision: "config-old", snapshot: domain.Snapshot{Hostname: "vpn.example.net", ListenAddress: "0.0.0.0:8443", Users: []domain.VPNUser{{Username: "alice", Credential: "long-enough-credential", Status: domain.UserActive}}}}
 	tlsStore := &tlsStoreStub{}
 	configs := &configStoreStub{}
-	proc := &reloadStub{firstErr: errors.New("sighup failed")}
+	proc := &reloadStub{firstErr: errors.New("restart failed")}
 	c := NewTLSCoordinator(repo, tlsStore, configs, proc, nil)
 	if _, err := c.Publish(context.Background(), certificate.Bundle{}); err == nil {
 		t.Fatal("expected reload failure")
@@ -340,13 +342,16 @@ func TestTLSCoordinatorRollsBackAndReloadsPrevious(t *testing.T) {
 	if !tlsStore.rolled || !configs.rolled || repo.revision != "config-old" || proc.calls != 2 {
 		t.Fatalf("tls=%v config=%v revision=%s calls=%d", tlsStore.rolled, configs.rolled, repo.revision, proc.calls)
 	}
+	if proc.revisions[0] != "config-new" || proc.revisions[1] != "config-old" {
+		t.Fatalf("restart revisions=%v", proc.revisions)
+	}
 }
 
 func TestTLSCoordinatorReportsRollbackFailure(t *testing.T) {
 	repo := &tlsRepoStub{revision: "config-old", snapshot: domain.Snapshot{Hostname: "vpn.example.net", ListenAddress: "0.0.0.0:8443", Users: []domain.VPNUser{{Username: "alice", Credential: "long-enough-credential", Status: domain.UserActive}}}}
 	tlsStore := &tlsStoreStub{rollbackErr: errors.New("tls rollback failed")}
 	configs := &configStoreStub{rollbackErr: errors.New("config rollback failed")}
-	proc := &reloadStub{firstErr: errors.New("sighup failed")}
+	proc := &reloadStub{firstErr: errors.New("restart failed")}
 	c := NewTLSCoordinator(repo, tlsStore, configs, proc, nil)
 	_, err := c.Publish(context.Background(), certificate.Bundle{})
 	if err == nil || !tlsStore.rolled || !configs.rolled {

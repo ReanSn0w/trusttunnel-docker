@@ -121,15 +121,18 @@ One verified run produced:
 | HTTP/2, post-quantum off | pass | 512 bytes | 0 |
 | HTTP/3 (QUIC) | pass | none | 17 |
 
-The Anti-DPI trace split the first TLS record across TCP writes; its record
-length remained the same as baseline. Another local run measured 600 bytes for
-the post-quantum-off record, so the exact size is not a fixed client contract.
-These measurements show a smaller ClientHello in this setup and a successful
-QUIC tunnel. They do not establish which variant works on the user's affected
-network. No capture, packet-loss comparison, mobile app test, or bypass result
-from that network is available here. The released CLI lacks `tls_profile`, so
-the runtime probe omits that unsupported field; the exported complete CLI TOML
-still requires a compatible source build for TLS profile selection.
+The Anti-DPI trace split the first TLS record across TCP writes. In this run
+its record length matched baseline; a repeat measured 1822 bytes for Anti-DPI
+and 1758 for baseline. Another local run measured 600 bytes for the
+post-quantum-off record. ClientHello size varies between attempts, so a single
+byte count is not a fixed client contract or proof that Anti-DPI changes only
+packet boundaries. These measurements show a smaller ClientHello with
+post-quantum disabled in this setup and a successful QUIC tunnel. They do not
+establish which variant works on the user's affected network. No capture,
+packet-loss comparison, mobile app test, or bypass result from that network is
+available here. The released CLI lacks `tls_profile`, so the runtime probe
+omits that unsupported field; the exported complete CLI TOML still requires a
+compatible source build for TLS profile selection.
 
 ## Inspected primary sources (2026-09-24)
 

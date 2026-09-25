@@ -27,7 +27,9 @@ type ConfigRevisionStore interface {
 	Apply(config.Files) (string, error)
 	Rollback() error
 }
-type TLSProcess interface{ Reload(context.Context) error }
+type TLSProcess interface {
+	Restart(context.Context, string) error
+}
 type ReadinessCheck func(context.Context) error
 type AdminCertificate interface {
 	Prepare(certificate.Published) (*tls.Certificate, error)
@@ -122,12 +124,14 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "none", adminPair: adminPair}
 		return published, nil
 	}
-	if err = c.process.Reload(ctx); err == nil {
+	// Endpoint arguments point to an immutable config revision. SIGHUP would
+	// reopen the old hosts.toml path and leave VPN on the previous certificate.
+	if err = c.process.Restart(ctx, configRevision); err == nil {
 		err = c.ready(ctx)
 	}
 	if err == nil {
 		rollbackTLS = false
-		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "sighup", activeUser: true, adminPair: adminPair}
+		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "restart", activeUser: true, adminPair: adminPair}
 		return published, nil
 	}
 	primaryErr := err
@@ -135,12 +139,12 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	tlsErr := c.restoreTLS(ctx, oldTLS)
 	rollbackTLS = false
 	dbErr := c.repo.SetActiveRevision(ctx, oldConfig)
-	reloadErr := c.process.Reload(ctx)
+	reloadErr := c.process.Restart(ctx, oldConfig)
 	var readyErr error
 	if reloadErr == nil {
 		readyErr = c.ready(ctx)
 	}
-	_ = c.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: configRevision, Kind: "tls", Action: "sighup", Result: "rollback", Error: sanitizeError(primaryErr)})
+	_ = c.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: configRevision, Kind: "tls", Action: "restart", Result: "rollback", Error: sanitizeError(primaryErr)})
 	if errors.Join(configErr, tlsErr, dbErr, reloadErr, readyErr) != nil {
 		return certificate.Published{}, fmt.Errorf("TLS reload failed: %w; rollback config=%v tls=%v db=%v reload=%v ready=%v", primaryErr, configErr, tlsErr, dbErr, reloadErr, readyErr)
 	}
@@ -162,7 +166,7 @@ func (c *TLSCoordinator) RevertLast(ctx context.Context) error {
 	dbErr := c.repo.SetActiveRevision(ctx, old.oldConfig)
 	var processErr error
 	if old.activeUser && configErr == nil && tlsErr == nil && dbErr == nil {
-		processErr = c.process.Reload(ctx)
+		processErr = c.process.Restart(ctx, old.oldConfig)
 		if processErr == nil {
 			processErr = c.ready(ctx)
 		}

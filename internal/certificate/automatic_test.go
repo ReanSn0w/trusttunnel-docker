@@ -10,9 +10,14 @@ import (
 func TestAutomaticSchedulerRetriesAfterACMEFailure(t *testing.T) {
 	repo := &schedulerRepo{}
 	calls := make(chan struct{}, 4)
+	attempts := 0
 	s := NewAutomaticScheduler(repo, func(context.Context) (Metadata, error) {
 		calls <- struct{}{}
-		return Metadata{}, errors.New("ACME unavailable")
+		attempts++
+		if attempts == 1 {
+			return Metadata{}, errors.New("ACME unavailable")
+		}
+		return Metadata{State: Active}, nil
 	}, nil)
 	s.baseBackoff, s.maxBackoff, s.jitter = 5*time.Millisecond, 10*time.Millisecond, 0
 	if err := s.Start(context.Background()); err != nil {
@@ -25,6 +30,25 @@ func TestAutomaticSchedulerRetriesAfterACMEFailure(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("automatic retry did not run")
 		}
+	}
+}
+
+func TestLetsEncryptFailureKeepsSelectedSource(t *testing.T) {
+	ctx := context.Background()
+	repo := &certRepo{m: Metadata{State: Unconfigured, Source: LetsEncrypt, Mode: Staging, Hostname: "vpn.example.net", Email: "admin@example.net"}}
+	store, err := NewTLSStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(repo, store, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+		return nil, errors.New("ACME unavailable")
+	})
+	if _, err = m.Ensure(ctx, time.Hour); err == nil {
+		t.Fatal("expected ACME failure")
+	}
+	got, err := repo.LoadTLSMetadata(ctx)
+	if err != nil || got.EffectiveSource() != LetsEncrypt || got.ActiveRevision != "" {
+		t.Fatalf("failure changed certificate source: %+v err=%v", got, err)
 	}
 }
 
