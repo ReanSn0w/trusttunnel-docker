@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"time"
 
+	"github.com/reansnow/trusttunnel-controller/internal/clientprofile"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -14,6 +14,7 @@ import (
 type ClientUserRepository interface {
 	UserByID(context.Context, int64) (domain.VPNUser, error)
 	Snapshot(context.Context) (domain.Snapshot, error)
+	LoadClientProfile(context.Context) (clientprofile.Settings, error)
 }
 type ClientExporter interface {
 	Export(context.Context, domain.VPNUser, string) (domain.ClientConfig, error)
@@ -45,14 +46,22 @@ func (s *ClientConfigService) Export(ctx context.Context, id int64) (domain.Clie
 	if err != nil {
 		return domain.ClientConfig{}, err
 	}
-	_, port, err := net.SplitHostPort(snap.ListenAddress)
+	profile, err := s.repo.LoadClientProfile(ctx)
 	if err != nil {
 		return domain.ClientConfig{}, err
 	}
 	if snap.Hostname == "" {
 		return domain.ClientConfig{}, errors.New("public hostname is not configured")
 	}
-	return s.exporter.Export(ctx, user, net.JoinHostPort(snap.Hostname, port))
+	address, err := profile.Address(snap.Hostname)
+	if err != nil {
+		return domain.ClientConfig{}, err
+	}
+	cfg, err := s.exporter.Export(ctx, user, address)
+	if err != nil {
+		return domain.ClientConfig{}, err
+	}
+	return clientprofile.Apply(cfg, profile)
 }
 func (s *ClientConfigService) QR(ctx context.Context, id int64, size int) ([]byte, error) {
 	if size < 128 || size > 512 {

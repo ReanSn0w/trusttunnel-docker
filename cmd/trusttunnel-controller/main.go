@@ -25,6 +25,8 @@ var (
 )
 
 type options struct {
+	TLSHostname     string        `long:"tls-hostname" env:"TT_TLS_HOSTNAME" description:"VPN certificate hostname to seed on first startup"`
+	ACMEEmail       string        `long:"acme-email" env:"TT_ACME_EMAIL" description:"ACME account email to seed on first startup"`
 	DataDir         string        `long:"data-dir" env:"TT_DATA_DIR" default:"/var/lib/trusttunnel" description:"Persistent data directory"`
 	EndpointBinary  string        `long:"endpoint-binary" env:"TT_ENDPOINT_BINARY" default:"/usr/local/bin/trusttunnel_endpoint" description:"Official endpoint binary"`
 	EndpointVersion string        `long:"endpoint-version" env:"TT_ENDPOINT_VERSION" default:"1.1.0" description:"Official endpoint version"`
@@ -115,6 +117,7 @@ func run(args []string) error {
 	defer cancel()
 
 	cfg := app.Config{
+		TLSHostname: opts.TLSHostname, ACMEEmail: opts.ACMEEmail,
 		DataDir: opts.DataDir, EndpointBinary: opts.EndpointBinary, EndpointVersion: opts.EndpointVersion,
 		UIListen: opts.UIListen, MetricsURL: opts.MetricsURL,
 		ProbeListen: opts.ProbeListen, HTTP01Listen: opts.HTTP01Listen, StartTimeout: opts.StartTimeout,

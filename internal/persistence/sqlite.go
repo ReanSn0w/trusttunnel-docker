@@ -16,7 +16,7 @@ import (
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 var migrations = []string{`
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -103,6 +103,11 @@ CREATE TABLE IF NOT EXISTS rules (
     action TEXT NOT NULL CHECK (action IN ('allow','deny')),
     network TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+`, `
+CREATE TABLE client_profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    settings_json TEXT NOT NULL
 );
 `}
 

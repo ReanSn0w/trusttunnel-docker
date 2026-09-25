@@ -19,6 +19,8 @@ type globalRandom struct{}
 func (globalRandom) Float64() float64 { return rand.Float64() }
 
 type Scheduler struct {
+	automatic                     bool
+	logf                          func(string, ...interface{})
 	repo                          MetadataRepository
 	renew                         RenewFunc
 	lead, baseBackoff, maxBackoff time.Duration
@@ -116,6 +118,10 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 }
 func (s *Scheduler) run(ctx context.Context, done chan struct{}) {
 	defer close(done)
+	if s.automatic {
+		s.runAutomatic(ctx)
+		return
+	}
 	attempt := 0
 	for {
 		meta, err := s.repo.LoadTLSMetadata(ctx)

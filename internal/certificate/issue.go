@@ -52,9 +52,20 @@ func NewManager(repo Repository, publisher Publisher, provider *HTTP01Provider, 
 	return &Manager{repo: repo, publisher: publisher, provider: provider, dataDir: dataDir, timeout: timeout, factory: factory, now: time.Now}
 }
 
+// Serialize keeps TLS settings changes out of an in-flight issue or renewal.
+func (m *Manager) Serialize(fn func() error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return fn()
+}
+
 func (m *Manager) Issue(ctx context.Context, mode Mode, email, hostname string) (Metadata, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.issue(ctx, mode, email, hostname)
+}
+
+func (m *Manager) issue(ctx context.Context, mode Mode, email, hostname string) (Metadata, error) {
 	if err := ValidateIdentity(email, hostname); err != nil {
 		return Metadata{}, err
 	}
@@ -122,6 +133,10 @@ func (m *Manager) Issue(ctx context.Context, mode Mode, email, hostname string) 
 func (m *Manager) Renew(ctx context.Context) (Metadata, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.renew(ctx)
+}
+
+func (m *Manager) renew(ctx context.Context) (Metadata, error) {
 	current, err := m.repo.LoadTLSMetadata(ctx)
 	if err != nil {
 		return Metadata{}, err

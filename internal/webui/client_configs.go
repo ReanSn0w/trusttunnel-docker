@@ -2,10 +2,12 @@ package webui
 
 import (
 	"context"
+	"encoding/base64"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 	"html/template"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type ClientConfigService interface {
@@ -32,7 +34,31 @@ func (h *ClientConfigHandler) DeepLink(w http.ResponseWriter, r *http.Request) {
 	}
 	noStore(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = h.tmpl.Execute(w, struct{ DeepLink string }{cfg.DeepLink})
+	payload := strings.TrimPrefix(cfg.DeepLink, "tt://?")
+	if _, err := base64.RawURLEncoding.DecodeString(payload); err != nil || payload == cfg.DeepLink || payload == "" {
+		http.Error(w, "invalid client link", http.StatusInternalServerError)
+		return
+	}
+	// Only the validated server-generated custom scheme may bypass template URL filtering.
+	_ = h.tmpl.Execute(w, struct {
+		DeepLink  string
+		LaunchURL template.URL
+	}{cfg.DeepLink, template.URL(cfg.DeepLink)})
+}
+func (h *ClientConfigHandler) CLI(w http.ResponseWriter, r *http.Request) {
+	id, ok := clientUserID(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := h.service.Export(r.Context(), id)
+	if err != nil {
+		http.Error(w, "client config unavailable", http.StatusConflict)
+		return
+	}
+	noStore(w)
+	w.Header().Set("Content-Type", "application/toml; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=trusttunnel-client.toml")
+	_, _ = w.Write([]byte(cfg.CLI))
 }
 func (h *ClientConfigHandler) TOML(w http.ResponseWriter, r *http.Request) {
 	id, ok := clientUserID(w, r)

@@ -31,6 +31,7 @@ type Logger interface {
 }
 
 type Config struct {
+	TLSHostname, ACMEEmail                                                                    string
 	DataDir, EndpointBinary, EndpointVersion, UIListen, MetricsURL, ProbeListen, HTTP01Listen string
 	StartTimeout, StopTimeout, SessionLifetime, RenewalLead                                   time.Duration
 	Version, Commit                                                                           string
@@ -59,6 +60,8 @@ func (c Config) Validate() error {
 }
 
 func Run(ctx context.Context, cfg Config, log Logger) error {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -107,10 +110,12 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
 	tlsSettings := service.NewTLSSettingsServiceWithMode(store, certificateManager, cfg.ACMEDefaultMode)
-	renewal := certificate.NewScheduler(store, certificateManager.Renew, cfg.RenewalLead)
-	if err = renewal.Start(ctx); err != nil {
+	if err = seedTLS(ctx, tlsSettings, cfg); err != nil {
 		return err
 	}
+	renewal := certificate.NewAutomaticScheduler(store, func(ctx context.Context) (certificate.Metadata, error) {
+		return certificateManager.Ensure(ctx, cfg.RenewalLead)
+	}, runtimeLog.Logf)
 
 	bootstrapService := auth.NewBootstrapService(store)
 	sessionService := auth.NewSessionService(store, cfg.SessionLifetime)
@@ -122,7 +127,8 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 		Bootstrap: bootstrapService, Auth: authHandler,
 		Dashboard: webui.NewDashboardHandler(proc, metrics.New(cfg.MetricsURL, 2*time.Second, 256<<10), store),
 		Users:     webui.NewUsersHandler(userManager), Clients: webui.NewClientConfigHandler(clientConfigs),
-		TLS: webui.NewTLSHandler(tlsSettings), Events: webui.NewEventsHandler(store, proc, controllerLogs),
+		Connection: webui.NewConnectionHandler(store),
+		TLS:        webui.NewTLSHandler(tlsSettings), Events: webui.NewEventsHandler(store, proc, controllerLogs),
 		CSRF: webui.NewCSRF(true), Logger: runtimeLog, ExternalTLS: cfg.ExternalTLS,
 	})
 	probeServer := &http.Server{Addr: cfg.ProbeListen, Handler: probe.New(store, proc, materializer, cfg.Version), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
@@ -169,6 +175,17 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 		}
 	}
 	runtimeLog.Logf("controller started version=%s commit=%s", cfg.Version, cfg.Commit)
+	// Start after listeners and endpoint recovery, avoiding a publish/startup race.
+	if err = renewal.Start(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		cancelRun()
+		stopCtx, cancel := context.WithTimeout(context.Background(), cfg.StopTimeout)
+		defer cancel()
+		_ = renewal.Stop(stopCtx)
+		_ = http01.Shutdown(stopCtx)
+	}()
 	select {
 	case <-ctx.Done():
 	case err = <-serverErr:
@@ -198,6 +215,7 @@ func (l teeLogger) Logf(format string, args ...interface{}) {
 
 type snapshotStore interface {
 	Snapshot(context.Context) (domain.Snapshot, error)
+	ActiveRevision(context.Context) (string, error)
 }
 type readinessProcess struct {
 	process *supervisor.Supervisor
@@ -212,6 +230,13 @@ func (p *readinessProcess) Restart(ctx context.Context, revision string) error {
 	return p.ready(ctx)
 }
 func (p *readinessProcess) Reload(ctx context.Context) error {
+	if p.process.Status().PID == 0 {
+		revision, err := p.store.ActiveRevision(ctx)
+		if err != nil {
+			return err
+		}
+		return p.Restart(ctx, revision)
+	}
 	if err := p.process.Reload(ctx); err != nil {
 		return err
 	}

@@ -47,6 +47,19 @@ func (s *TLSSettingsService) Save(ctx context.Context, hostname, email string, m
 	if err := certificate.ValidateIdentity(email, hostname); err != nil {
 		return certificate.Metadata{}, err
 	}
+	var current certificate.Metadata
+	var err error
+	if serializer, ok := s.cert.(interface{ Serialize(func() error) error }); ok {
+		err = serializer.Serialize(func() error {
+			current, err = s.save(ctx, hostname, email, mode)
+			return err
+		})
+		return current, err
+	}
+	return s.save(ctx, hostname, email, mode)
+}
+
+func (s *TLSSettingsService) save(ctx context.Context, hostname, email string, mode certificate.Mode) (certificate.Metadata, error) {
 	current, err := s.View(ctx)
 	if err != nil {
 		return current, err

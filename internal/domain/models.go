@@ -25,7 +25,7 @@ type EndpointStatus struct {
 }
 
 type EndpointMetrics struct{ ActiveConnections, TotalConnections float64 }
-type ClientConfig struct{ DeepLink, TOML string }
+type ClientConfig struct{ DeepLink, TOML, CLI string }
 type ApplyEvent struct {
 	ID                                    int64
 	Revision, Kind, Action, Result, Error string

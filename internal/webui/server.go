@@ -10,6 +10,7 @@ type RouterDependencies struct {
 	Clients     *ClientConfigHandler
 	TLS         *TLSHandler
 	Events      *EventsHandler
+	Connection  *ConnectionHandler
 	CSRF        *CSRF
 	Logger      RequestLogger
 	ExternalTLS bool
@@ -35,6 +36,11 @@ func NewRouter(d RouterDependencies) http.Handler {
 	protected("POST /users/{id}/client/deeplink", http.HandlerFunc(d.Clients.DeepLink))
 	protected("POST /users/{id}/client/toml", http.HandlerFunc(d.Clients.TOML))
 	protected("POST /users/{id}/client/qr", http.HandlerFunc(d.Clients.QR))
+	protected("POST /users/{id}/client/cli", http.HandlerFunc(d.Clients.CLI))
+	if d.Connection != nil {
+		protected("GET /connection", d.Connection)
+		protected("POST /connection", d.Connection)
+	}
 	protected("GET /tls", http.HandlerFunc(d.TLS.View))
 	protected("POST /tls", http.HandlerFunc(d.TLS.Save))
 	protected("POST /tls/issue", http.HandlerFunc(d.TLS.Issue))

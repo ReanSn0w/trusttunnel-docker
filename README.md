@@ -24,8 +24,10 @@ administrator UI; the official endpoint binary remains the VPN data plane.
 5. Open `/bootstrap` and create a strong administrator password. There are no
    default credentials and the password is not accepted through environment
    variables or logs.
-6. In **TLS**, save the VPN hostname and ACME email, then explicitly issue the
-   certificate. In **Users**, create the first VPN user and copy its generated
+6. Set `TT_TLS_HOSTNAME` and `TT_ACME_EMAIL` in `.env` before first start to
+   issue the VPN certificate automatically in the background. Alternatively,
+   save them in **TLS** after bootstrap; the background worker picks them up.
+   In **Users**, create the first VPN user and copy its generated
    password once. Confirm health/readiness and TCP/UDP listeners before sharing
    the generated official client config.
 
@@ -47,6 +49,7 @@ the disposable local state.
 
 ## Operations
 
+- Client transport, Anti-DPI exports and mobile limitations: `docs/connection-dpi.md`.
 - Reverse proxy and trusted-forwarding boundary: `docs/reverse-proxy.md`.
 - Persistent layout and one-time legacy import: `docs/data-layout.md`.
 - Backup, restore, upgrade and rollback: `docs/upgrade-rollback.md`.
