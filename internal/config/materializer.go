@@ -143,6 +143,30 @@ func (m *Materializer) Rollback() error {
 	return syncDir(m.root)
 }
 
+// Restore selects a known revision, or clears current on a failed first publish.
+func (m *Materializer) Restore(revision string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current := filepath.Join(m.root, "current")
+	if revision == "" {
+		if err := os.Remove(current); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		_ = os.Remove(filepath.Join(m.root, "previous"))
+		return syncDir(m.root)
+	}
+	if filepath.Base(revision) != revision || revision == "." || revision == ".." {
+		return errors.New("invalid config revision")
+	}
+	if _, err := os.Stat(filepath.Join(m.root, "revisions", revision)); err != nil {
+		return err
+	}
+	if err := atomicSymlink(current, filepath.Join("revisions", revision)); err != nil {
+		return err
+	}
+	return syncDir(m.root)
+}
+
 func (m *Materializer) ActiveDir() (string, error) {
 	target, err := os.Readlink(filepath.Join(m.root, "current"))
 	if err != nil {

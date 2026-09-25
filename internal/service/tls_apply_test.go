@@ -3,13 +3,62 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/config"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
+	"github.com/reansnow/trusttunnel-controller/internal/persistence"
 )
+
+func TestTLSCoordinatorCanRevertFirstPublication(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repo, err := persistence.Open(ctx, filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err = repo.SetHostname(ctx, "vpn.example.net"); err != nil {
+		t.Fatal(err)
+	}
+	tlsStore, err := certificate.NewTLSStore(filepath.Join(root, "tls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := config.NewMaterializer(filepath.Join(root, "config"), func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := certificate.GenerateSelfSigned("vpn.example.net", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator := NewTLSCoordinator(repo, tlsStore, files, &reloadStub{}, nil)
+	if _, err = coordinator.Publish(ctx, bundle); err != nil {
+		t.Fatal(err)
+	}
+	if err = coordinator.RevertLast(ctx); err != nil {
+		t.Fatal(err)
+	}
+	events, err := repo.ListApplyEvents(ctx, 0, 10)
+	if err != nil || len(events) != 1 || events[0].Result != "rollback" {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	for _, path := range []string{filepath.Join(root, "tls", "current"), filepath.Join(root, "config", "current")} {
+		if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("first publication remained active at %s: %v", path, err)
+		}
+	}
+	revision, err := repo.ActiveRevision(ctx)
+	if err != nil || revision != "" {
+		t.Fatalf("active revision=%q err=%v", revision, err)
+	}
+}
 
 type tlsRepoStub struct {
 	revision string
@@ -94,7 +143,8 @@ func TestTLSCoordinatorDefersReloadBeforeFirstUser(t *testing.T) {
 	if got.Revision != "tls-new" || repo.revision != "config-new" || proc.calls != 0 || tlsStore.rolled || configs.rolled {
 		t.Fatalf("got=%#v repo=%s calls=%d tls-rolled=%v config-rolled=%v", got, repo.revision, proc.calls, tlsStore.rolled, configs.rolled)
 	}
-	if len(repo.events) != 1 || repo.events[0].Action != "deferred" || repo.events[0].Result != "success" {
+	c.CompletePublished()
+	if len(repo.events) != 1 || repo.events[0].Action != "none" || repo.events[0].Result != "success" {
 		t.Fatalf("events=%#v", repo.events)
 	}
 }

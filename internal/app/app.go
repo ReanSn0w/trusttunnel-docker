@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/reansnow/trusttunnel-controller/internal/auth"
@@ -97,7 +98,10 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	}
 	readyProc := &readinessProcess{process: proc, store: store, timeout: cfg.StartTimeout}
 	applyManager := service.NewApplyManager(store, materializer, readyProc)
+	applyLock := &sync.Mutex{}
+	applyManager.SetApplyLock(applyLock)
 	userManager := service.NewUserManager(store, applyManager)
+	userManager.SetApplyLock(applyLock)
 	exporter, err := endpointcli.New(cfg.EndpointBinary, filepath.Join(cfg.DataDir, "config", "current", "vpn.toml"), filepath.Join(cfg.DataDir, "config", "current", "hosts.toml"), 10*time.Second, 1<<20, 2)
 	if err != nil {
 		return err
@@ -110,6 +114,7 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	tlsCoordinator := service.NewTLSCoordinator(store, tlsStore, materializer, readyProc, nil)
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
+	certificateManager.SetApplyLock(applyLock)
 	tlsSettings := service.NewTLSSettingsServiceWithMode(store, certificateManager, cfg.ACMEDefaultMode)
 	if err = seedTLS(ctx, tlsSettings, cfg, runtimeLog); err != nil {
 		return err

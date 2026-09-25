@@ -28,9 +28,10 @@ type SnapshotApplier interface {
 	Apply(context.Context, domain.Snapshot, string) (string, error)
 }
 type UserManager struct {
-	mu    sync.Mutex
-	repo  UserRepository
-	apply SnapshotApplier
+	mu        sync.Mutex
+	applyLock *sync.Mutex
+	repo      UserRepository
+	apply     SnapshotApplier
 }
 type CreatedUser struct {
 	User     domain.VPNUser
@@ -40,6 +41,7 @@ type CreatedUser struct {
 func NewUserManager(repo UserRepository, apply SnapshotApplier) *UserManager {
 	return &UserManager{repo: repo, apply: apply}
 }
+func (m *UserManager) SetApplyLock(lock *sync.Mutex) { m.applyLock = lock }
 func (m *UserManager) List(ctx context.Context) ([]domain.VPNUser, error) {
 	users, err := m.repo.ListUsers(ctx)
 	for i := range users {
@@ -50,6 +52,10 @@ func (m *UserManager) List(ctx context.Context) ([]domain.VPNUser, error) {
 func (m *UserManager) Create(ctx context.Context, username string) (CreatedUser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.applyLock != nil {
+		m.applyLock.Lock()
+		defer m.applyLock.Unlock()
+	}
 	if !userNameRE.MatchString(username) {
 		return CreatedUser{}, errors.New("invalid username")
 	}
@@ -117,6 +123,10 @@ func (m *UserManager) Rotate(ctx context.Context, id int64) (string, error) {
 func (m *UserManager) mutate(ctx context.Context, id int64, change func(*domain.VPNUser) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.applyLock != nil {
+		m.applyLock.Lock()
+		defer m.applyLock.Unlock()
+	}
 	before, err := m.repo.UserByID(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("user not found")
@@ -138,6 +148,20 @@ func (m *UserManager) mutate(ctx context.Context, id int64, change func(*domain.
 	return nil
 }
 func (m *UserManager) applyCurrent(ctx context.Context) error {
+	if m.applyLock != nil {
+		if current, ok := m.apply.(interface {
+			ApplyCurrentLocked(context.Context, string) (string, error)
+		}); ok {
+			_, err := current.ApplyCurrentLocked(ctx, "restart")
+			return err
+		}
+	}
+	if current, ok := m.apply.(interface {
+		ApplyCurrent(context.Context, string) (string, error)
+	}); ok {
+		_, err := current.ApplyCurrent(ctx, "restart")
+		return err
+	}
 	snap, err := m.repo.Snapshot(ctx)
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -104,6 +105,8 @@ func (m *Manager) publishUnmanaged(ctx context.Context, previous, next Metadata,
 	if err != nil {
 		return m.failUnmanaged(ctx, next, kind+"-validate", err)
 	}
+	m.lockApply()
+	defer m.unlockApply()
 	published, err := m.publisher.Publish(ctx, bundle)
 	if err != nil {
 		return m.failUnmanaged(ctx, next, kind+"-publish", err)
@@ -120,9 +123,11 @@ func (m *Manager) publishUnmanaged(ctx context.Context, previous, next Metadata,
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
-		return m.failUnmanaged(ctx, previous, kind+"-metadata", err)
+		rollbackErr := m.revertPublication()
+		return m.failUnmanaged(ctx, previous, kind+"-metadata", errors.Join(err, rollbackErr))
 	}
-	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: kind, Action: "sighup", Result: "success"})
+	m.completePublication()
+	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: kind, Action: "none", Result: "success"})
 	return next, nil
 }
 
