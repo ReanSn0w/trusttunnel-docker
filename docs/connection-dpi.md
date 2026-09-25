@@ -91,6 +91,46 @@ in the incident was 1.2.0; no patched iOS binary was built or installed here.
    TSPU versus another middlebox, routing or MTU problem. No live bypass success
    is asserted by this controller change.
 
+## Reproducible local connection check (2026-09-25)
+
+`scripts/test-local-connection.sh` uses the controller image with the pinned
+TrustTunnel endpoint v1.1.0, the official Linux x86_64 CLI v1.1.7, and a
+disposable Docker network. It changes only the named profile setting between
+runs. Each client reaches a private HTTP test service through its SOCKS listener
+and the VPN endpoint; the script verifies the response body. The test endpoint
+sets `allow_private_network_connections = true` solely to reach that private
+service. The production endpoint retains the upstream default of `false`.
+
+Run with a locally built controller image and the extracted official CLI binary:
+
+```sh
+IMAGE=trusttunnel-controller:local \
+CLIENT_BINARY=/absolute/path/to/trusttunnel_client \
+PLATFORM=linux/amd64 ./scripts/test-local-connection.sh
+```
+
+The script captures each complete attempt on the endpoint container's `eth0`
+only, with TCP and UDP port 8443. It checks for captured frames, reconstructs
+the first TLS record header across the Anti-DPI split, and counts UDP packets.
+One verified run produced:
+
+| Profile | HTTP response | First TLS record payload | UDP packets to endpoint |
+| --- | --- | ---: | ---: |
+| HTTP/2 baseline | pass | 1758 bytes | 0 |
+| HTTP/2 + Anti-DPI | pass | 1758 bytes | 0 |
+| HTTP/2, post-quantum off | pass | 512 bytes | 0 |
+| HTTP/3 (QUIC) | pass | none | 17 |
+
+The Anti-DPI trace split the first TLS record across TCP writes; its record
+length remained the same as baseline. Another local run measured 600 bytes for
+the post-quantum-off record, so the exact size is not a fixed client contract.
+These measurements show a smaller ClientHello in this setup and a successful
+QUIC tunnel. They do not establish which variant works on the user's affected
+network. No capture, packet-loss comparison, mobile app test, or bypass result
+from that network is available here. The released CLI lacks `tls_profile`, so
+the runtime probe omits that unsupported field; the exported complete CLI TOML
+still requires a compatible source build for TLS profile selection.
+
 ## Inspected primary sources (2026-09-24)
 
 - [Native anti-DPI write handling](https://github.com/TrustTunnel/TrustTunnelClient/blob/def663d06e7d6e99e024702ac45e0cad6749e32d/net/src/tcp_socket.cpp),
