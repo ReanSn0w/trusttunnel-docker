@@ -85,6 +85,26 @@ func Backoff(attempt int, base, maximum time.Duration) time.Duration {
 	return delay
 }
 
+func jitterBackoff(delay, maximum time.Duration, fraction, random float64) time.Duration {
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	if random < 0 {
+		random = 0
+	}
+	if random > 1 {
+		random = 1
+	}
+	result := time.Duration(float64(delay) * (1 - fraction + 2*fraction*random))
+	if result > maximum {
+		return maximum
+	}
+	return result
+}
+
 func (s *Scheduler) Start(parent context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

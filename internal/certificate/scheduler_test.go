@@ -22,6 +22,12 @@ func TestRenewalWindowJitterAndBackoff(t *testing.T) {
 	if got := Backoff(10, time.Minute, time.Hour); got != time.Hour {
 		t.Fatalf("capped=%v", got)
 	}
+	if got := jitterBackoff(time.Minute, time.Hour, .1, 0); got != 54*time.Second {
+		t.Fatalf("early jitter=%v", got)
+	}
+	if got := jitterBackoff(time.Hour, time.Hour, .1, 1); got != time.Hour {
+		t.Fatalf("jitter exceeded cap: %v", got)
+	}
 }
 
 type schedulerRepo struct {

@@ -6,6 +6,23 @@ import (
 	"time"
 )
 
+type controlledACME struct {
+	started chan struct{}
+	release chan struct{}
+	bundle  Bundle
+}
+
+func (c controlledACME) EnsureAccount(context.Context) (string, error) { return "account-uri", nil }
+func (c controlledACME) Obtain(ctx context.Context, _ string) (Bundle, error) {
+	close(c.started)
+	select {
+	case <-c.release:
+		return c.bundle, nil
+	case <-ctx.Done():
+		return Bundle{}, ctx.Err()
+	}
+}
+
 func TestEnsureIssuesOnceAndRenewsWhenDue(t *testing.T) {
 	ctx := context.Background()
 	repo := &certRepo{m: Metadata{State: Unconfigured, Mode: Staging, Hostname: "vpn.example.net", Email: "admin@example.net"}}
@@ -58,6 +75,94 @@ func TestEnsureLeavesManualCertificateAlone(t *testing.T) {
 	got, err := m.Ensure(context.Background(), time.Hour)
 	if err != nil || got.State != Manual {
 		t.Fatalf("manual=%+v err=%v", got, err)
+	}
+}
+
+func TestEnsureNeverCallsACMEForOtherSources(t *testing.T) {
+	for _, source := range []Source{SelfSigned, Provided} {
+		t.Run(string(source), func(t *testing.T) {
+			repo := &certRepo{m: Metadata{State: Unconfigured, Source: source, Mode: ManualMode, Hostname: "vpn.example.net"}}
+			m := NewManager(repo, nil, nil, t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+				t.Fatal("non-ACME source called ACME")
+				return nil, nil
+			})
+			if _, err := m.Ensure(context.Background(), time.Hour); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEnsureRecoversInterruptedRenewalWithoutOrder(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewTLSStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := makeBundle(t, "vpn.example.net", "Test CA")
+	published, err := store.Publish(ctx, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &certRepo{m: Metadata{State: Renewing, Mode: Staging, Hostname: "vpn.example.net", Email: "admin@example.net", ActiveRevision: published.Revision, CertificatePath: published.CertificatePath, PrivateKeyPath: published.PrivateKeyPath}}
+	m := NewManager(repo, store, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+		t.Fatal("valid pair triggered a second order")
+		return nil, nil
+	})
+	got, err := m.Ensure(ctx, time.Hour)
+	if err != nil || got.State != Active {
+		t.Fatalf("recovered=%+v err=%v", got, err)
+	}
+}
+
+func TestEnsureDoesNotReusePreviousSourceAfterExplicitSwitch(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewTLSStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := makeBundle(t, "vpn.example.net", "Test CA")
+	old, err := store.Publish(ctx, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &certRepo{m: Metadata{State: Unconfigured, Source: LetsEncrypt, Mode: Staging, Hostname: "vpn.example.net", Email: "admin@example.net", ActiveRevision: old.Revision, CertificatePath: old.CertificatePath, PrivateKeyPath: old.PrivateKeyPath}}
+	orders := 0
+	m := NewManager(repo, store, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+		orders++
+		return fakeACME{bundle}, nil
+	})
+	if _, err = m.Ensure(ctx, time.Hour); err != nil || orders != 1 {
+		t.Fatalf("orders=%d err=%v", orders, err)
+	}
+}
+
+func TestEnsureSerializesSettingsChange(t *testing.T) {
+	repo := &certRepo{m: Metadata{State: Unconfigured, Mode: Staging, Hostname: "vpn.example.net", Email: "admin@example.net"}}
+	client := controlledACME{started: make(chan struct{}), release: make(chan struct{}), bundle: makeBundle(t, "vpn.example.net", "Test CA")}
+	m := NewManager(repo, fakePublisher{}, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), 5*time.Second, func(ACMEConfig) (ACMEClient, error) { return client, nil })
+	issueDone := make(chan error, 1)
+	go func() { _, err := m.Ensure(context.Background(), time.Hour); issueDone <- err }()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("issue did not start")
+	}
+	saveDone := make(chan struct{})
+	go func() { _ = m.Serialize(func() error { close(saveDone); return nil }) }()
+	select {
+	case <-saveDone:
+		t.Fatal("settings change ran during certificate issue")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(client.release)
+	if err := <-issueDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-saveDone:
+	case <-time.After(time.Second):
+		t.Fatal("settings change remained blocked")
 	}
 }
 
