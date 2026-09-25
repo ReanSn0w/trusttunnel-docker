@@ -57,9 +57,13 @@ func (p *HTTP01Provider) CleanUp(ctx context.Context, domain, token, keyAuth str
 		return nil
 	}
 	server := p.server
+	listener := p.listener
 	p.server = nil
 	p.listener = nil
 	p.mu.Unlock()
+	if listener != nil {
+		_ = listener.Close()
+	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdownCtx)
@@ -69,9 +73,13 @@ func (p *HTTP01Provider) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	p.tokens = map[string]string{}
 	server := p.server
+	listener := p.listener
 	p.server = nil
 	p.listener = nil
 	p.mu.Unlock()
+	if listener != nil {
+		_ = listener.Close()
+	}
 	if server == nil {
 		return nil
 	}

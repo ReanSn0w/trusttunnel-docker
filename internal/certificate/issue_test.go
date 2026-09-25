@@ -19,6 +19,10 @@ import (
 )
 
 func makeBundle(t *testing.T, hostname, issuer string) Bundle {
+	return makeBundleWithLifetime(t, hostname, issuer, 24*time.Hour)
+}
+
+func makeBundleWithLifetime(t *testing.T, hostname, issuer string, lifetime time.Duration) Bundle {
 	t.Helper()
 	now := time.Now().UTC()
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -28,7 +32,7 @@ func makeBundle(t *testing.T, hostname, issuer string) Bundle {
 		t.Fatal(err)
 	}
 	leafKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(lifetime), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, &leafKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +119,35 @@ func (fakePublisher) Publish(context.Context, Bundle) (Published, error) {
 	return Published{Revision: "tls-r1", CertificatePath: "cert.pem", PrivateKeyPath: "key.pem"}, nil
 }
 
+type rollbackPublisher struct{ reverted bool }
+
+func (*rollbackPublisher) Publish(context.Context, Bundle) (Published, error) {
+	return Published{Revision: "tls-new", CertificatePath: "new-cert.pem", PrivateKeyPath: "new-key.pem"}, nil
+}
+func (p *rollbackPublisher) RevertLast(context.Context) error { p.reverted = true; return nil }
+
+type failActiveRepo struct{ *certRepo }
+
+func (r *failActiveRepo) SaveTLSMetadata(ctx context.Context, m Metadata) error {
+	if m.State == Active {
+		return errors.New("metadata write failed")
+	}
+	return r.certRepo.SaveTLSMetadata(ctx, m)
+}
+
+func TestManagerRevertsPublishedPairWhenMetadataWriteFails(t *testing.T) {
+	repo := &failActiveRepo{certRepo: &certRepo{m: Metadata{State: Unconfigured, Source: LetsEncrypt, Mode: Staging, Hostname: "vpn.example.net", Email: "admin@example.net"}}}
+	publisher := &rollbackPublisher{}
+	bundle := makeBundle(t, "vpn.example.net", "Test CA")
+	m := NewManager(repo, publisher, NewHTTP01Provider("127.0.0.1:0", 1), t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) { return fakeACME{bundle}, nil })
+	if _, err := m.Ensure(context.Background(), time.Hour); err == nil {
+		t.Fatal("metadata failure was ignored")
+	}
+	if !publisher.reverted || repo.m.ActiveRevision != "" {
+		t.Fatalf("published pair was not reverted: reverted=%v metadata=%+v", publisher.reverted, repo.m)
+	}
+}
+
 func TestManagerIssue(t *testing.T) {
 	repo := &certRepo{m: Metadata{State: Unconfigured}}
 	bundle := makeBundle(t, "vpn.example.net", "Production CA")
@@ -163,7 +196,7 @@ func TestManagerManualImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != Manual || got.Mode != ManualMode || got.ActiveRevision != "tls-r1" {
+	if got.State != Active || got.Source != Provided || got.Mode != ManualMode || got.ActiveRevision != "tls-r1" {
 		t.Fatalf("metadata=%#v", got)
 	}
 }

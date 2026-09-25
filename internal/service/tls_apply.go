@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
@@ -35,6 +36,12 @@ type TLSCoordinator struct {
 	configs ConfigRevisionStore
 	process TLSProcess
 	ready   ReadinessCheck
+	pending *tlsPublication
+}
+
+type tlsPublication struct {
+	oldConfig, oldTLS, newConfig, action string
+	activeUser                           bool
 }
 
 func NewTLSCoordinator(repo TLSRepository, tls TLSRevisionStore, configs ConfigRevisionStore, process TLSProcess, ready ReadinessCheck) *TLSCoordinator {
@@ -55,6 +62,10 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	if err != nil {
 		return certificate.Published{}, err
 	}
+	oldTLS := ""
+	if snapshot.TLSCertificatePath != "" {
+		oldTLS = filepath.Base(filepath.Dir(snapshot.TLSCertificatePath))
+	}
 	published, err := c.tls.Publish(ctx, bundle)
 	if err != nil {
 		return certificate.Published{}, err
@@ -62,7 +73,7 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	rollbackTLS := true
 	defer func() {
 		if rollbackTLS {
-			_ = c.tls.Rollback(context.Background())
+			_ = c.restoreTLS(context.Background(), oldTLS)
 		}
 	}()
 	snapshot.TLSCertificatePath, snapshot.TLSPrivateKeyPath = published.CertificatePath, published.PrivateKeyPath
@@ -72,10 +83,11 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	}
 	configRevision, err := c.configs.Apply(files)
 	if err != nil {
+		_ = c.restoreConfig(oldConfig)
 		return certificate.Published{}, err
 	}
 	if err = c.repo.SetActiveRevision(ctx, configRevision); err != nil {
-		_ = c.configs.Rollback()
+		_ = c.restoreConfig(oldConfig)
 		return certificate.Published{}, err
 	}
 	// Before the first VPN user exists there is intentionally no endpoint
@@ -90,7 +102,7 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	}
 	if !activeUser {
 		rollbackTLS = false
-		_ = c.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: configRevision, Kind: "tls", Action: "deferred", Result: "success"})
+		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "none"}
 		return published, nil
 	}
 	if err = c.process.Reload(ctx); err == nil {
@@ -98,12 +110,12 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	}
 	if err == nil {
 		rollbackTLS = false
-		_ = c.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: configRevision, Kind: "tls", Action: "sighup", Result: "success"})
+		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "sighup", activeUser: true}
 		return published, nil
 	}
 	primaryErr := err
-	configErr := c.configs.Rollback()
-	tlsErr := c.tls.Rollback(ctx)
+	configErr := c.restoreConfig(oldConfig)
+	tlsErr := c.restoreTLS(ctx, oldTLS)
 	rollbackTLS = false
 	dbErr := c.repo.SetActiveRevision(ctx, oldConfig)
 	reloadErr := c.process.Reload(ctx)
@@ -116,4 +128,51 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 		return certificate.Published{}, fmt.Errorf("TLS reload failed: %w; rollback config=%v tls=%v db=%v reload=%v ready=%v", primaryErr, configErr, tlsErr, dbErr, reloadErr, readyErr)
 	}
 	return certificate.Published{}, fmt.Errorf("TLS reload failed and was rolled back: %w", primaryErr)
+}
+
+// RevertLast restores both published revisions when metadata persistence fails.
+// The caller holds the shared apply lock until this returns.
+func (c *TLSCoordinator) RevertLast(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pending == nil {
+		return errors.New("no pending TLS publication")
+	}
+	old := *c.pending
+	c.pending = nil
+	configErr := c.restoreConfig(old.oldConfig)
+	tlsErr := c.restoreTLS(ctx, old.oldTLS)
+	dbErr := c.repo.SetActiveRevision(ctx, old.oldConfig)
+	var processErr error
+	if old.activeUser && configErr == nil && tlsErr == nil && dbErr == nil {
+		processErr = c.process.Reload(ctx)
+		if processErr == nil {
+			processErr = c.ready(ctx)
+		}
+	}
+	_ = c.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: old.newConfig, Kind: "tls", Action: old.action, Result: "rollback", Error: "TLS metadata publication failed"})
+	return errors.Join(configErr, tlsErr, dbErr, processErr)
+}
+
+func (c *TLSCoordinator) restoreConfig(revision string) error {
+	if store, ok := c.configs.(interface{ Restore(string) error }); ok {
+		return store.Restore(revision)
+	}
+	return c.configs.Rollback()
+}
+
+func (c *TLSCoordinator) restoreTLS(ctx context.Context, revision string) error {
+	if store, ok := c.tls.(interface{ Restore(string) error }); ok {
+		return store.Restore(revision)
+	}
+	return c.tls.Rollback(ctx)
+}
+
+func (c *TLSCoordinator) CompletePublished() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pending != nil {
+		_ = c.repo.RecordEvent(context.Background(), domain.ApplyEvent{Revision: c.pending.newConfig, Kind: "tls", Action: c.pending.action, Result: "success"})
+	}
+	c.pending = nil
 }

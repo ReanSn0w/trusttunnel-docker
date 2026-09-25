@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/reansnow/trusttunnel-controller/internal/auth"
@@ -31,7 +32,8 @@ type Logger interface {
 }
 
 type Config struct {
-	TLSHostname, ACMEEmail                                                                    string
+	TLSHostname, ACMEEmail, TLSCertificateFile, TLSKeyFile                                    string
+	TLSSource                                                                                 certificate.Source
 	DataDir, EndpointBinary, EndpointVersion, UIListen, MetricsURL, ProbeListen, HTTP01Listen string
 	StartTimeout, StopTimeout, SessionLifetime, RenewalLead                                   time.Duration
 	Version, Commit                                                                           string
@@ -59,7 +61,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func Run(ctx context.Context, cfg Config, log Logger) error {
+func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	if err := cfg.Validate(); err != nil {
@@ -96,7 +98,10 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	}
 	readyProc := &readinessProcess{process: proc, store: store, timeout: cfg.StartTimeout}
 	applyManager := service.NewApplyManager(store, materializer, readyProc)
+	applyLock := &sync.Mutex{}
+	applyManager.SetApplyLock(applyLock)
 	userManager := service.NewUserManager(store, applyManager)
+	userManager.SetApplyLock(applyLock)
 	exporter, err := endpointcli.New(cfg.EndpointBinary, filepath.Join(cfg.DataDir, "config", "current", "vpn.toml"), filepath.Join(cfg.DataDir, "config", "current", "hosts.toml"), 10*time.Second, 1<<20, 2)
 	if err != nil {
 		return err
@@ -109,8 +114,9 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	tlsCoordinator := service.NewTLSCoordinator(store, tlsStore, materializer, readyProc, nil)
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
+	certificateManager.SetApplyLock(applyLock)
 	tlsSettings := service.NewTLSSettingsServiceWithMode(store, certificateManager, cfg.ACMEDefaultMode)
-	if err = seedTLS(ctx, tlsSettings, cfg); err != nil {
+	if err = seedTLS(ctx, tlsSettings, cfg, runtimeLog); err != nil {
 		return err
 	}
 	renewal := certificate.NewAutomaticScheduler(store, func(ctx context.Context) (certificate.Metadata, error) {
@@ -142,6 +148,13 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 		_ = probeListener.Close()
 		return fmt.Errorf("UI listener: %w", err)
 	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.StopTimeout)
+		defer cancel()
+		_ = uiServer.Shutdown(shutdownCtx)
+		_ = probeServer.Shutdown(shutdownCtx)
+		runErr = errors.Join(runErr, proc.Stop(shutdownCtx))
+	}()
 	serverErr := make(chan error, 2)
 	go func() {
 		if serveErr := probeServer.Serve(probeListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
@@ -189,16 +202,10 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	select {
 	case <-ctx.Done():
 	case err = <-serverErr:
-		return err
+		runErr = err
 	}
 	runtimeLog.Logf("controller stopping")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.StopTimeout)
-	defer cancel()
-	_ = renewal.Stop(shutdownCtx)
-	_ = http01.Shutdown(shutdownCtx)
-	_ = uiServer.Shutdown(shutdownCtx)
-	_ = probeServer.Shutdown(shutdownCtx)
-	return proc.Stop(shutdownCtx)
+	return runErr
 }
 
 type teeLogger struct {

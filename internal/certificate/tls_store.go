@@ -136,6 +136,32 @@ func (s *TLSStore) Rollback(ctx context.Context) error {
 	}
 	return syncTLSDir(s.root)
 }
+
+// Restore selects a known pair, or clears current on a failed first publish.
+func (s *TLSStore) Restore(revision string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := filepath.Join(s.root, "current")
+	if revision == "" {
+		if err := os.Remove(current); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if err := os.Remove(filepath.Join(s.root, "previous")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return syncTLSDir(s.root)
+	}
+	if filepath.Base(revision) != revision || revision == "." || revision == ".." {
+		return errors.New("invalid TLS revision")
+	}
+	if _, err := os.Stat(filepath.Join(s.root, "revisions", revision)); err != nil {
+		return err
+	}
+	if err := atomicTLSSymlink(current, filepath.Join("revisions", revision)); err != nil {
+		return err
+	}
+	return syncTLSDir(s.root)
+}
 func (s *TLSStore) Active() (Published, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

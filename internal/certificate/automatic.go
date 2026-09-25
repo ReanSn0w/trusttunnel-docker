@@ -21,7 +21,13 @@ func (m *Manager) Ensure(ctx context.Context, lead time.Duration) (Metadata, err
 	if err != nil {
 		return current, err
 	}
-	if current.Mode == ManualMode || current.Hostname == "" || current.Email == "" {
+	if current.EffectiveSource() == SelfSigned {
+		return m.ensureSelfSigned(ctx, current, lead)
+	}
+	if current.EffectiveSource() == Provided {
+		return m.ensureProvided(ctx, current)
+	}
+	if current.EffectiveSource() != LetsEncrypt || current.Hostname == "" || current.Email == "" {
 		return current, nil
 	}
 	if err = ValidateIdentity(current.Email, current.Hostname); err != nil {
@@ -37,7 +43,7 @@ func (m *Manager) Ensure(ctx context.Context, lead time.Duration) (Metadata, err
 	}
 	chain, certErr := os.ReadFile(current.CertificatePath)
 	key, keyErr := os.ReadFile(current.PrivateKeyPath)
-	if certErr == nil && keyErr == nil && current.ActiveRevision != "" {
+	if certErr == nil && keyErr == nil && current.ActiveRevision != "" && current.State != Unconfigured {
 		leaf, validationErr := ValidateBundle(Bundle{Certificate: chain, PrivateKey: key}, current.Hostname, current.Mode, m.now())
 		if validationErr == nil {
 			if lead <= 0 {
@@ -90,7 +96,7 @@ func (s *Scheduler) runAutomatic(ctx context.Context) {
 		}
 		delay := 30 * time.Second
 		if err != nil {
-			delay = Backoff(attempt, s.baseBackoff, s.maxBackoff)
+			delay = jitterBackoff(Backoff(attempt, s.baseBackoff, s.maxBackoff), s.maxBackoff, s.jitter, s.random.Float64())
 			attempt++
 			if s.logf != nil {
 				s.logf("automatic TLS failed; retry in %s: %s", delay, sanitizeCertificateError(err))

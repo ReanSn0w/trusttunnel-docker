@@ -33,6 +33,7 @@ type ClientFactory func(ACMEConfig) (ACMEClient, error)
 
 type Manager struct {
 	mu        sync.Mutex
+	applyMu   *sync.Mutex
 	repo      Repository
 	publisher Publisher
 	factory   ClientFactory
@@ -40,6 +41,36 @@ type Manager struct {
 	dataDir   string
 	timeout   time.Duration
 	now       func() time.Time
+}
+
+// SetApplyLock shares one publication lock with user configuration changes.
+// Call this during startup, before any worker or request can use the manager.
+func (m *Manager) SetApplyLock(lock *sync.Mutex) { m.applyMu = lock }
+
+func (m *Manager) lockApply() {
+	if m.applyMu != nil {
+		m.applyMu.Lock()
+	}
+}
+func (m *Manager) unlockApply() {
+	if m.applyMu != nil {
+		m.applyMu.Unlock()
+	}
+}
+
+func (m *Manager) revertPublication() error {
+	if publisher, ok := m.publisher.(interface{ RevertLast(context.Context) error }); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+		defer cancel()
+		return publisher.RevertLast(ctx)
+	}
+	return nil
+}
+
+func (m *Manager) completePublication() {
+	if publisher, ok := m.publisher.(interface{ CompletePublished() }); ok {
+		publisher.CompletePublished()
+	}
 }
 
 func NewManager(repo Repository, publisher Publisher, provider *HTTP01Provider, dataDir string, timeout time.Duration, factory ClientFactory) *Manager {
@@ -56,6 +87,8 @@ func NewManager(repo Repository, publisher Publisher, provider *HTTP01Provider, 
 func (m *Manager) Serialize(fn func() error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.lockApply()
+	defer m.unlockApply()
 	return fn()
 }
 
@@ -71,9 +104,12 @@ func (m *Manager) issue(ctx context.Context, mode Mode, email, hostname string) 
 	}
 	current, err := m.repo.LoadTLSMetadata(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		current = Metadata{State: Unconfigured}
+		current = Metadata{State: Unconfigured, Source: LetsEncrypt}
 	} else if err != nil {
 		return Metadata{}, err
+	}
+	if current.EffectiveSource() != LetsEncrypt {
+		return current, errors.New("ACME issue is disabled for the selected TLS source")
 	}
 	next, err := current.Transition(Issuing)
 	if err != nil {
@@ -107,6 +143,8 @@ func (m *Manager) issue(ctx context.Context, mode Mode, email, hostname string) 
 	if err != nil {
 		return m.fail(ctx, next, "validate", err)
 	}
+	m.lockApply()
+	defer m.unlockApply()
 	published, err := m.publisher.Publish(opCtx, bundle)
 	if err != nil {
 		return m.fail(ctx, next, "publish", err)
@@ -124,9 +162,11 @@ func (m *Manager) issue(ctx context.Context, mode Mode, email, hostname string) 
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
-		return m.fail(ctx, next, "metadata", err)
+		rollbackErr := m.revertPublication()
+		return m.fail(ctx, current, "metadata", errors.Join(err, rollbackErr))
 	}
-	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-issue", Action: "sighup", Result: "pending"})
+	m.completePublication()
+	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-issue", Action: "none", Result: "success"})
 	return next, nil
 }
 
@@ -141,8 +181,8 @@ func (m *Manager) renew(ctx context.Context) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	if current.Mode == ManualMode {
-		return current, errors.New("ACME renewal is disabled in manual mode")
+	if current.EffectiveSource() != LetsEncrypt {
+		return current, errors.New("ACME renewal is disabled for the selected TLS source")
 	}
 	if err = ValidateIdentity(current.Email, current.Hostname); err != nil {
 		return current, err
@@ -173,6 +213,11 @@ func (m *Manager) renew(ctx context.Context) (Metadata, error) {
 	if err != nil {
 		return m.fail(ctx, next, "renew-validate", err)
 	}
+	if current.Fingerprint != "" && fingerprint(validated) == current.Fingerprint {
+		return m.fail(ctx, next, "renew-unchanged", errors.New("ACME returned the active certificate without a later expiry"))
+	}
+	m.lockApply()
+	defer m.unlockApply()
 	published, err := m.publisher.Publish(opCtx, bundle)
 	if err != nil {
 		return m.fail(ctx, next, "renew-publish", err)
@@ -190,9 +235,11 @@ func (m *Manager) renew(ctx context.Context) (Metadata, error) {
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
-		return m.fail(ctx, next, "renew-metadata", err)
+		rollbackErr := m.revertPublication()
+		return m.fail(ctx, current, "renew-metadata", errors.Join(err, rollbackErr))
 	}
-	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-renew", Action: "sighup", Result: "pending"})
+	m.completePublication()
+	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-renew", Action: "none", Result: "success"})
 	return next, nil
 }
 
@@ -210,12 +257,15 @@ func (m *Manager) ImportManual(ctx context.Context, hostname string, chain, priv
 	if err != nil {
 		return current, err
 	}
+	m.lockApply()
+	defer m.unlockApply()
 	published, err := m.publisher.Publish(ctx, bundle)
 	if err != nil {
 		return current, err
 	}
 	next := current
-	next.State = Manual
+	next.State = Active
+	next.Source = Provided
 	next.Mode = ManualMode
 	next.Hostname = hostname
 	next.Serial = validated.SerialNumber.String()
@@ -230,9 +280,10 @@ func (m *Manager) ImportManual(ctx context.Context, hostname string, chain, priv
 	next.LastError = ""
 	next.UpdatedAt = m.now().UTC()
 	if err = m.repo.SaveTLSMetadata(ctx, next); err != nil {
-		return current, err
+		return current, errors.Join(err, m.revertPublication())
 	}
-	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-manual", Action: "sighup", Result: "success"})
+	m.completePublication()
+	_ = m.repo.RecordEvent(ctx, domain.ApplyEvent{Revision: published.Revision, Kind: "tls-manual", Action: "none", Result: "success"})
 	return next, nil
 }
 

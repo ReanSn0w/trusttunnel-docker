@@ -42,19 +42,46 @@ type Process interface {
 }
 
 type ApplyManager struct {
-	mu      sync.Mutex
+	mu      *sync.Mutex
 	repo    RevisionStore
 	files   Materializer
 	process Process
 }
 
 func NewApplyManager(repo RevisionStore, files Materializer, process Process) *ApplyManager {
-	return &ApplyManager{repo: repo, files: files, process: process}
+	return &ApplyManager{mu: &sync.Mutex{}, repo: repo, files: files, process: process}
+}
+
+func (m *ApplyManager) SetApplyLock(lock *sync.Mutex) { m.mu = lock }
+
+// ApplyCurrent reads the snapshot while holding the publication lock.
+func (m *ApplyManager) ApplyCurrent(ctx context.Context, action string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ApplyCurrentLocked(ctx, action)
+}
+
+func (m *ApplyManager) ApplyCurrentLocked(ctx context.Context, action string) (string, error) {
+	repo, ok := m.repo.(interface {
+		Snapshot(context.Context) (domain.Snapshot, error)
+	})
+	if !ok {
+		return "", fmt.Errorf("current snapshot is unavailable")
+	}
+	snapshot, err := repo.Snapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	return m.apply(ctx, snapshot, action)
 }
 
 func (m *ApplyManager) Apply(ctx context.Context, snapshot domain.Snapshot, action string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.apply(ctx, snapshot, action)
+}
+
+func (m *ApplyManager) apply(ctx context.Context, snapshot domain.Snapshot, action string) (string, error) {
 	old, err := m.repo.ActiveRevision(ctx)
 	if err != nil {
 		return "", err
