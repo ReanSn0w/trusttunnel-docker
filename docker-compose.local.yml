@@ -14,10 +14,10 @@ services:
       # VPN TCP/UDP на свободном высоком порту.
       - "127.0.0.1:18443:8443/tcp"
       - "127.0.0.1:18443:8443/udp"
-      # Admin UI только на loopback.
-      - "127.0.0.1:18080:8080/tcp"
+      # HTTPS AdminUI только на loopback.
+      - "127.0.0.1:18444:8444/tcp"
     environment:
-      TT_UI_LISTEN: "0.0.0.0:8080"
+      TT_UI_LISTEN: "0.0.0.0:8444"
       TT_PROBE_LISTEN: "127.0.0.1:8081"
       TT_ACME_DEFAULT_MODE: "staging"
     volumes: !override

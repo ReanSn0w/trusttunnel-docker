@@ -6,9 +6,8 @@ administrator UI; the official endpoint binary remains the VPN data plane.
 
 ## Minimal production start
 
-1. Point the VPN hostname's public A/AAAA record at the server. Make TCP 80,
-   TCP 443 and UDP 443 reachable; the reverse-proxy example publishes the admin
-   UI over HTTPS on TCP 8444 by default.
+1. Point the VPN hostname's public A/AAAA record at the server. Make TCP 443,
+   UDP 443 and TCP 8444 reachable. TCP 80 is needed for Let's Encrypt HTTP-01.
 2. Copy `.env.example` to `.env` and replace `TRUSTTUNNEL_IMAGE` with the
    immutable image digest from the release.
 3. Validate and start:
@@ -19,8 +18,9 @@ administrator UI; the official endpoint binary remains the VPN data plane.
    docker compose up -d
    ```
 
-4. Connect the UI only through the TLS reverse proxy described in
-   `docs/reverse-proxy.md`. The base Compose does not publish it.
+4. Open the built-in AdminUI at `https://<TT_TLS_HOSTNAME>:8444`. Use the DNS
+   name covered by the VPN certificate, not the server IP. The base Compose
+   publishes this HTTPS port separately from VPN TCP 443.
 5. Open `/bootstrap` and create a strong administrator password. There are no
    default credentials and the password is not accepted through environment
    variables or logs.
@@ -40,7 +40,7 @@ does not publish TCP 80, and binds every host port to loopback:
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.local.yml config
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
-open http://127.0.0.1:18080/bootstrap
+open https://<TT_TLS_HOSTNAME>:18444/bootstrap
 ```
 
 VPN TCP/UDP is available only at `127.0.0.1:18443`. Do not use production DNS,
@@ -51,7 +51,7 @@ the disposable local state.
 ## Operations
 
 - Client transport, Anti-DPI exports and mobile limitations: `docs/connection-dpi.md`.
-- Reverse proxy and trusted-forwarding boundary: `docs/reverse-proxy.md`.
+- Migration from the old Nginx deployment: `docs/reverse-proxy.md`.
 - Persistent layout and one-time legacy import: `docs/data-layout.md`.
 - Backup, restore, upgrade and rollback: `docs/upgrade-rollback.md`.
 - Release tags, digests and attestations: `docs/release-contract.md`.

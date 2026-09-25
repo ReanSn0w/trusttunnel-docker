@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -37,8 +38,6 @@ type Config struct {
 	DataDir, EndpointBinary, EndpointVersion, UIListen, MetricsURL, ProbeListen, HTTP01Listen string
 	StartTimeout, StopTimeout, SessionLifetime, RenewalLead                                   time.Duration
 	Version, Commit                                                                           string
-	TrustedProxies                                                                            []string
-	ExternalTLS                                                                               bool
 	ACMEDefaultMode                                                                           certificate.Mode
 }
 
@@ -125,7 +124,7 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 
 	bootstrapService := auth.NewBootstrapService(store)
 	sessionService := auth.NewSessionService(store, cfg.SessionLifetime)
-	authHandler, err := webui.NewAuthHandler(sessionService, nil, cfg.TrustedProxies, true)
+	authHandler, err := webui.NewAuthHandler(sessionService, nil, nil, true)
 	if err != nil {
 		return fmt.Errorf("trusted proxies: %w", err)
 	}
@@ -135,10 +134,21 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 		Users:     webui.NewUsersHandler(userManager), Clients: webui.NewClientConfigHandler(clientConfigs),
 		Connection: webui.NewConnectionHandler(store),
 		TLS:        webui.NewTLSHandler(tlsSettings), Events: webui.NewEventsHandler(store, proc, controllerLogs),
-		CSRF: webui.NewCSRF(true), Logger: runtimeLog, ExternalTLS: cfg.ExternalTLS,
+		CSRF: webui.NewCSRF(true), Logger: runtimeLog, ExternalTLS: true,
 	})
 	probeServer := &http.Server{Addr: cfg.ProbeListen, Handler: probe.New(store, proc, materializer, cfg.Version), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
 	uiServer := &http.Server{Addr: cfg.UIListen, Handler: router, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	uiServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		active, err := tlsStore.Active()
+		if err != nil {
+			return nil, fmt.Errorf("no active AdminUI TLS certificate: %w", err)
+		}
+		pair, err := tls.LoadX509KeyPair(active.CertificatePath, active.PrivateKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load active AdminUI TLS certificate: %w", err)
+		}
+		return &pair, nil
+	}}
 	probeListener, err := net.Listen("tcp", cfg.ProbeListen)
 	if err != nil {
 		return fmt.Errorf("probe listener: %w", err)
@@ -162,7 +172,7 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 		}
 	}()
 	go func() {
-		if serveErr := uiServer.Serve(uiListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		if serveErr := uiServer.Serve(tls.NewListener(uiListener, uiServer.TLSConfig)); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			serverErr <- serveErr
 		}
 	}()
