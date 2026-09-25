@@ -54,6 +54,11 @@ The complete profile changes system routes/DNS while running; do not test it
 over your only remote-management connection. Downloads and links contain VPN
 credentials: keep them private. Original credentials, certificate and unknown
 endpoint fields are preserved. No verification-bypass option is introduced.
+The pinned endpoint v1.1.0 exporter was checked with both self-signed and
+provided PEM input: the certificate reached the TOML and deeplink alongside
+the original username/password and explicit external port 443. If a client
+pins the old self-signed or provided certificate, export and reimport the
+profile after rotation; an existing imported profile is not updated remotely.
 
 The official TLV deeplink supports protocol, Anti-DPI and IPv6, but has no tags
 for TLS profile or post-quantum exchange. More importantly, the inspected
