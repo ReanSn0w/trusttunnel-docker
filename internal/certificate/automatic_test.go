@@ -82,7 +82,7 @@ func TestEnsureNeverCallsACMEForOtherSources(t *testing.T) {
 	for _, source := range []Source{SelfSigned, Provided} {
 		t.Run(string(source), func(t *testing.T) {
 			repo := &certRepo{m: Metadata{State: Unconfigured, Source: source, Mode: ManualMode, Hostname: "vpn.example.net"}}
-			m := NewManager(repo, nil, nil, t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+			m := NewManager(repo, fakePublisher{}, nil, t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
 				t.Fatal("non-ACME source called ACME")
 				return nil, nil
 			})

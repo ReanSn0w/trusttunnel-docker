@@ -4,8 +4,27 @@ import (
 	"context"
 	"database/sql"
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestPublicSelfSignedCertificateRequiresActiveSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cert.pem")
+	if err := os.WriteFile(path, []byte("public certificate only"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := &tlsSettingsRepo{m: certificate.Metadata{State: certificate.Unconfigured, Source: certificate.SelfSigned, ActiveRevision: "old", CertificatePath: path}}
+	svc := NewTLSSettingsService(repo, nil)
+	if _, err := svc.PublicSelfSignedCertificate(context.Background()); err == nil {
+		t.Fatal("served a previous source certificate during the switch")
+	}
+	repo.m.State = certificate.Active
+	data, err := svc.PublicSelfSignedCertificate(context.Background())
+	if err != nil || string(data) != "public certificate only" {
+		t.Fatalf("certificate=%q err=%v", data, err)
+	}
+}
 
 type tlsSettingsRepo struct {
 	m     certificate.Metadata

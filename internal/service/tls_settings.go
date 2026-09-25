@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 )
@@ -152,4 +153,22 @@ func (s *TLSSettingsService) Issue(ctx context.Context) (certificate.Metadata, e
 }
 func (s *TLSSettingsService) Renew(ctx context.Context) (certificate.Metadata, error) {
 	return s.cert.Renew(ctx)
+}
+
+func (s *TLSSettingsService) PublicSelfSignedCertificate(ctx context.Context) ([]byte, error) {
+	m, err := s.View(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m.EffectiveSource() != certificate.SelfSigned || m.State != certificate.Active || m.ActiveRevision == "" || m.CertificatePath == "" {
+		return nil, errors.New("self-signed certificate is not available")
+	}
+	data, err := os.ReadFile(m.CertificatePath)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, errors.New("certificate is too large")
+	}
+	return data, nil
 }

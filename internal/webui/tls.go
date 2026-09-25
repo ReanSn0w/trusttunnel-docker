@@ -16,6 +16,9 @@ type TLSService interface {
 type TLSSourceService interface {
 	SaveConfiguration(context.Context, certificate.Source, string, string, certificate.Mode, string, string) (certificate.Metadata, error)
 }
+type PublicSelfSignedCertificateService interface {
+	PublicSelfSignedCertificate(context.Context) ([]byte, error)
+}
 type TLSHandler struct {
 	service TLSService
 	tmpl    *template.Template
@@ -29,6 +32,22 @@ func NewTLSHandler(service TLSService) *TLSHandler {
 	return &TLSHandler{service: service, tmpl: template.Must(template.ParseFS(Files, "templates/tls.html"))}
 }
 func (h *TLSHandler) View(w http.ResponseWriter, r *http.Request) { h.render(w, r, "", "") }
+func (h *TLSHandler) PublicCertificate(w http.ResponseWriter, r *http.Request) {
+	service, ok := h.service.(PublicSelfSignedCertificateService)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := service.PublicSelfSignedCertificate(r.Context())
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="trusttunnel-server-cert.pem"`)
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(data)
+}
 func (h *TLSHandler) Save(w http.ResponseWriter, r *http.Request) {
 	if !postOnly(w, r) {
 		return

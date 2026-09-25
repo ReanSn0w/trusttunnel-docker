@@ -42,6 +42,7 @@ func NewRouter(d RouterDependencies) http.Handler {
 		protected("POST /connection", d.Connection)
 	}
 	protected("GET /tls", http.HandlerFunc(d.TLS.View))
+	protected("GET /tls/certificate", http.HandlerFunc(d.TLS.PublicCertificate))
 	protected("POST /tls", http.HandlerFunc(d.TLS.Save))
 	protected("POST /tls/issue", http.HandlerFunc(d.TLS.Issue))
 	protected("POST /tls/renew", http.HandlerFunc(d.TLS.Renew))
