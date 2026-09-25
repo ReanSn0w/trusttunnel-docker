@@ -18,16 +18,16 @@ administrator UI; the official endpoint binary remains the VPN data plane.
    docker compose up -d
    ```
 
-4. Open the built-in AdminUI at `https://<TT_TLS_HOSTNAME>:8444`. Use the DNS
-   name covered by the VPN certificate, not the server IP. The base Compose
-   publishes this HTTPS port separately from VPN TCP 443.
-5. Open `/bootstrap` and create a strong administrator password. There are no
-   default credentials and the password is not accepted through environment
-   variables or logs.
-6. Choose `TT_TLS_SOURCE` and `TT_TLS_HOSTNAME` in `.env` before first start.
+4. Set `TT_TLS_SOURCE` and `TT_TLS_HOSTNAME` in `.env` before first start.
    Let's Encrypt also needs `TT_ACME_EMAIL`; see `docs/tls-lifecycle.md` for all
-   three sources. Alternatively, save the source in **TLS** after bootstrap; the
-   background worker picks it up.
+   three sources. The panel becomes reachable after the first valid pair is
+   published. Check container logs and `/healthz` while Let's Encrypt is issuing.
+   Later source changes can be saved in **TLS**.
+5. Open the built-in AdminUI at `https://<TT_TLS_HOSTNAME>:8444/bootstrap`.
+   Use the DNS name covered by the VPN certificate, not the server IP. The base
+   Compose publishes this HTTPS port separately from VPN TCP 443.
+6. Create a strong administrator password. There are no default credentials and
+   the password is not accepted through environment variables or logs.
    In **Users**, create the first VPN user and copy its generated
    password once. Confirm health/readiness and TCP/UDP listeners before sharing
    the generated official client config.

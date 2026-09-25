@@ -2,10 +2,12 @@ package certificate
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 )
 
 // AdminCertificate exposes one confirmed TLS pair to all new handshakes.
@@ -21,6 +23,13 @@ func (a *AdminCertificate) Prepare(p Published) (*tls.Certificate, error) {
 	pair, err := tls.LoadX509KeyPair(p.CertificatePath, p.PrivateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("load AdminUI TLS revision: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("parse AdminUI TLS certificate: %w", err)
+	}
+	if now := time.Now(); now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return nil, errors.New("AdminUI TLS certificate is outside its validity window")
 	}
 	return &pair, nil
 }

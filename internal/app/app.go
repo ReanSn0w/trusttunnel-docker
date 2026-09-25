@@ -133,6 +133,15 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 	if err = seedTLS(ctx, tlsSettings, cfg, runtimeLog); err != nil {
 		return err
 	}
+	currentTLS, err := tlsSettings.View(ctx)
+	if err != nil {
+		return err
+	}
+	if currentTLS.Hostname == "" {
+		runtimeLog.Logf("AdminUI HTTPS is waiting for TLS settings; set TT_TLS_SOURCE and TT_TLS_HOSTNAME at startup")
+	} else if currentTLS.ActiveRevision == "" {
+		runtimeLog.Logf("AdminUI HTTPS is waiting for the first %s certificate for %s", currentTLS.EffectiveSource(), currentTLS.Hostname)
+	}
 	renewal := certificate.NewAutomaticScheduler(store, func(ctx context.Context) (certificate.Metadata, error) {
 		return certificateManager.Ensure(ctx, cfg.RenewalLead)
 	}, runtimeLog.Logf)
