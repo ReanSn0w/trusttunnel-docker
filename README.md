@@ -4,13 +4,43 @@ Self-hosted single-container controller for the official TrustTunnel endpoint.
 It owns configuration, TLS renewal, process supervision and a server-rendered
 administrator UI; the official endpoint binary remains the VPN data plane.
 
+The checked-in `docker-compose.yml` runs one service and one persistent volume:
+VPN TCP/UDP on 443, built-in HTTPS AdminUI on 8444, and TCP 80 only for ACME
+HTTP-01. There is no Nginx service. Its essential layout is:
+
+```yaml
+services:
+  trusttunnel:
+    image: ${TRUSTTUNNEL_IMAGE}
+    ports:
+      - "443:8443/tcp"
+      - "443:8443/udp"
+      - "8444:8444/tcp"
+      - "80:80/tcp"
+    volumes:
+      - trusttunnel_data:/var/lib/trusttunnel
+volumes:
+  trusttunnel_data:
+```
+
+Use the checked-in file for the complete security and healthcheck settings.
+
 ## Minimal production start
 
 1. Point the VPN hostname's public A/AAAA record at the server. Make TCP 443,
    UDP 443 and TCP 8444 reachable. TCP 80 is needed for Let's Encrypt HTTP-01.
-2. Copy `.env.example` to `.env` and replace `TRUSTTUNNEL_IMAGE` with the
-   immutable image digest from the release.
-3. Validate and start:
+2. Copy `.env.example` to `.env`. Set `TRUSTTUNNEL_IMAGE` to the verified
+   immutable release digest and choose exactly one TLS source before starting:
+
+   | Source | Required `.env` values | Additional setup |
+   | --- | --- | --- |
+   | Let's Encrypt | `TT_TLS_SOURCE=letsencrypt`, `TT_TLS_HOSTNAME`, `TT_ACME_EMAIL` | Public DNS and inbound TCP 80 for HTTP-01 |
+   | Self-signed | `TT_TLS_SOURCE=self-signed`, `TT_TLS_HOSTNAME` | Trust the generated certificate on clients |
+   | Provided PEM | `TT_TLS_SOURCE=provided`, `TT_TLS_HOSTNAME`, `TT_PROVIDED_TLS_DIR` | Read-only PEM mount and container paths from `docker-compose.provided.yml` |
+
+3. Validate and start. For the provided source, replace `docker compose` in
+   each command with
+   `docker compose -f docker-compose.yml -f docker-compose.provided.yml`:
 
    ```sh
    docker compose config
@@ -18,11 +48,9 @@ administrator UI; the official endpoint binary remains the VPN data plane.
    docker compose up -d
    ```
 
-4. Set `TT_TLS_SOURCE` and `TT_TLS_HOSTNAME` in `.env` before first start.
-   Let's Encrypt also needs `TT_ACME_EMAIL`; see `docs/tls-lifecycle.md` for all
-   three sources. The panel becomes reachable after the first valid pair is
-   published. Check container logs and `/healthz` while Let's Encrypt is issuing.
-   Later source changes can be saved in **TLS**.
+4. The panel becomes reachable after the first valid pair is published. Check
+   container logs and `/healthz` while Let's Encrypt is issuing. Later source
+   changes can be saved in **TLS**; see `docs/tls-lifecycle.md`.
 5. Open the built-in AdminUI at `https://<TT_TLS_HOSTNAME>:8444/bootstrap`.
    Use the DNS name covered by the VPN certificate, not the server IP. The base
    Compose publishes this HTTPS port separately from VPN TCP 443.
@@ -54,6 +82,7 @@ the disposable local state.
 - Migration from the old Nginx deployment: `docs/reverse-proxy.md`.
 - Persistent layout and one-time legacy import: `docs/data-layout.md`.
 - Backup, restore, upgrade and rollback: `docs/upgrade-rollback.md`.
+- Local release checks and deployment boundary: `docs/release-validation.md`.
 - Release tags, digests and attestations: `docs/release-contract.md`.
 
 Rotate the administrator password from **Account** in the UI. Rotation creates
