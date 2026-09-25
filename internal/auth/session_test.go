@@ -123,3 +123,17 @@ func TestLoginLimiterBoundsAndBackoff(t *testing.T) {
 		t.Fatalf("entries=%d", len(l.entries))
 	}
 }
+
+func TestLoginLimiterKeepsAccountBackoffAcrossNetworkChange(t *testing.T) {
+	l := NewLoginLimiter(time.Minute, 16)
+	now := time.Unix(1, 0)
+	l.now = func() time.Time { return now }
+	l.Failure("198.51.100.1", "admin")
+	if ok, _ := l.Allow("203.0.113.2", "admin"); ok {
+		t.Fatal("network change bypassed account backoff")
+	}
+	now = now.Add(time.Second)
+	if ok, _ := l.Allow("203.0.113.2", "admin"); !ok {
+		t.Fatal("temporary backoff did not expire")
+	}
+}

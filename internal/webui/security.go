@@ -80,7 +80,7 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }
-func SecurityMiddleware(logger RequestLogger, externalTLS bool, maxBody int64, next http.Handler) http.Handler {
+func SecurityMiddleware(logger RequestLogger, maxBody int64, next http.Handler) http.Handler {
 	if maxBody <= 0 {
 		maxBody = 1 << 20
 	}
@@ -91,7 +91,7 @@ func SecurityMiddleware(logger RequestLogger, externalTLS bool, maxBody int64, n
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		if externalTLS {
+		if r.TLS != nil {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

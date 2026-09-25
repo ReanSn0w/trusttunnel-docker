@@ -9,25 +9,21 @@ services:
       # VPN HTTPS/HTTP2 и QUIC/HTTP3.
       - "443:8443/tcp"
       - "443:8443/udp"
+      # Встроенный HTTPS AdminUI на отдельном порту.
+      - "${TT_ADMIN_PORT:-8444}:8444/tcp"
       # Только ACME HTTP-01.
       - "80:80/tcp"
-    expose:
-      # Admin UI доступен только контейнерам во внутренней сети.
-      - "8080"
     environment:
       TT_TLS_SOURCE: ${TT_TLS_SOURCE:-}
       TT_TLS_HOSTNAME: ${TT_TLS_HOSTNAME:-}
       TT_ACME_EMAIL: ${TT_ACME_EMAIL:-}
       TT_TLS_CERTIFICATE_FILE: ${TT_TLS_CERTIFICATE_FILE:-}
       TT_TLS_KEY_FILE: ${TT_TLS_KEY_FILE:-}
-      TT_UI_LISTEN: "0.0.0.0:8080"
+      TT_UI_LISTEN: "0.0.0.0:8444"
       TT_PROBE_LISTEN: "127.0.0.1:8081"
     volumes:
       # SQLite, ревизии конфигов, TLS и ACME account.
       - trusttunnel_data:/var/lib/trusttunnel
-    networks:
-      - default
-      - admin
     cap_drop:
       - ALL
     cap_add:
@@ -43,10 +39,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
-
-networks:
-  admin:
-    internal: true
 
 volumes:
   trusttunnel_data:

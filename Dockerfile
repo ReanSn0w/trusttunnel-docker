@@ -64,5 +64,5 @@ COPY --from=endpoint-fetch --chown=65532:65532 /trusttunnel_endpoint /usr/local/
 COPY --chown=65532:65532 LICENSES /licenses
 USER 65532:65532
 VOLUME ["/var/lib/trusttunnel"]
-EXPOSE 8080/tcp 8081/tcp 8443/tcp 8443/udp 80/tcp
+EXPOSE 8444/tcp 8081/tcp 8443/tcp 8443/udp 80/tcp
 ENTRYPOINT ["/usr/local/bin/trusttunnel-controller"]

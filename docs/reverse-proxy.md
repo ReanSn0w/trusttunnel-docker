@@ -1,47 +1,41 @@
-# Admin UI reverse proxy boundary
+# Переход с Nginx на встроенный HTTPS AdminUI
 
-Production access to the administrator UI goes through a TLS reverse proxy. The
-example deliberately does **not** proxy TrustTunnel VPN traffic. Because the VPN
-already owns host TCP 443, the UI uses host TCP 8444 by default and is reachable
-from any client address at `https://<server-name>:8444`. Set `TT_ADMIN_PORT` to
-use another free host port. No source-IP allowlist is applied.
+Панель теперь обслуживается контроллером на TCP 8444. Она использует ту же
+подтверждённую ревизию сертификата, что VPN на TCP 443. Внешняя TLS-терминация
+и HTTP-вход панели больше не поддерживаются. Открывайте
+`https://<TT_TLS_HOSTNAME>:8444/bootstrap` при первом входе и
+`https://<TT_TLS_HOSTNAME>:8444/login` впоследствии. IP-адрес не подойдёт,
+если его нет в SAN сертификата; настройка источника требует DNS-имя.
 
-Place the certificate chain and private key at `secrets/admin.crt` and
-`secrets/admin.key`. A publicly trusted certificate for the server DNS name is
-preferred. For a private deployment, a self-signed certificate works after its
-CA is installed as trusted on every phone/browser that will use the panel. Merely
-clicking through a browser certificate warning is not a sound permanent setup.
+## Порядок обновления существующей установки
 
-For a private CA and a correctly constrained server certificate:
+1. Сделайте проверенный backup volume по `docs/upgrade-rollback.md`. Сохраните
+   свои файлы Compose и переменные окружения для возможности отката.
+2. Убедитесь, что в сохранённых настройках TLS есть действующий сертификат
+   VPN, либо задайте `TT_TLS_SOURCE`, `TT_TLS_HOSTNAME` и нужные для источника
+   параметры до первого запуска новой версии. При Let's Encrypt разрешите
+   входящий TCP 80 для HTTP-01. Для `provided` смонтируйте PEM-пару по
+   `docker-compose.provided.yml`.
+3. Остановите старый `admin-proxy` с помощью **старого** файла Compose, пока он
+   ещё доступен: `docker compose -f docker-compose.yml -f docker-compose.reverse-proxy.yml stop admin-proxy`.
+   Если вы использовали другое имя сервиса, остановите соответствующий контейнер.
+   Освободите host TCP 8444 для контроллера.
+4. Уберите старый override из команды запуска. Удалите `TT_EXTERNAL_TLS` и
+   `TT_TRUSTED_PROXY` из окружения, включая `.env` и дополнительные Compose
+   файлы. Новая версия отвергает эти параметры с подсказкой о миграции.
+5. Укажите в `TRUSTTUNNEL_IMAGE` digest новой версии и запустите обновлённый
+   `docker compose -f docker-compose.yml up -d` (добавьте
+   `-f docker-compose.provided.yml`, если используете смонтированные PEM).
+   Проверьте healthcheck, затем HTTPS по домену сертификата на 8444. Для
+   self-signed установите доверие к сертификату на каждом клиенте.
 
-```sh
-./scripts/generate-admin-certificate.sh admin.example.net
-```
+Не используйте `down --volumes`: данные SQLite, сертификаты, учётные записи и
+конфигурация VPN остаются в `trusttunnel_data`. Старый контейнер Nginx можно
+удалить после проверки нового входа; это отдельное действие и не затрагивает
+volume контроллера. Файлы `secrets/admin.crt` и `secrets/admin.key` больше не
+используются панелью. Не удаляйте их до проверки отката.
 
-Replace `admin.example.net` with the real DNS name or server IP. The script puts
-the correct DNS or IP SAN in the leaf certificate. Install
-`secrets/admin-ca.crt` as a trusted root CA on the mobile device before logging
-in; do not copy `admin-ca.key` off the server.
-
-```sh
-docker compose -f docker-compose.yml \
-  -f docker-compose.reverse-proxy.yml config
-docker compose -f docker-compose.yml \
-  -f docker-compose.reverse-proxy.yml up -d
-```
-
-Open `https://<server-name>:8444/bootstrap` for the first account, then use
-`https://<server-name>:8444/login`. HTTPS allows the controller's Secure session
-and CSRF cookies to work correctly.
-
-The proxy has the fixed address `172.31.250.2` on the dedicated `/29` bridge,
-and the controller trusts exactly `172.31.250.2/32`. Nginx overwrites, rather
-than appends, `X-Forwarded-For` and sets `X-Forwarded-Proto: https`; requests
-from every other peer have forwarded headers ignored. The proxy receives static
-certificate/key bind mounts and no Docker socket, service-discovery privilege,
-host network, or access to the controller data volume.
-
-The override explicitly sets `internal: false`. Podman disables bridge IP
-forwarding for an internal network, which also prevents the published HTTPS port
-from reaching Nginx. Only the declared host port is published; the controller's
-port 8080 remains unbound on the host.
+Встроенный HTTPS не читает `X-Forwarded-*` для адреса клиента или защищённости
+соединения. Непубличный `/healthz` остаётся на loopback внутри контейнера;
+TCP 80 обслуживает только ACME HTTP-01 при выпуске Let's Encrypt и не содержит
+маршрутов панели.

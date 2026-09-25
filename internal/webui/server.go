@@ -3,17 +3,16 @@ package webui
 import "net/http"
 
 type RouterDependencies struct {
-	Bootstrap   BootstrapService
-	Auth        *AuthHandler
-	Dashboard   *DashboardHandler
-	Users       *UsersHandler
-	Clients     *ClientConfigHandler
-	TLS         *TLSHandler
-	Events      *EventsHandler
-	Connection  *ConnectionHandler
-	CSRF        *CSRF
-	Logger      RequestLogger
-	ExternalTLS bool
+	Bootstrap  BootstrapService
+	Auth       *AuthHandler
+	Dashboard  *DashboardHandler
+	Users      *UsersHandler
+	Clients    *ClientConfigHandler
+	TLS        *TLSHandler
+	Events     *EventsHandler
+	Connection *ConnectionHandler
+	CSRF       *CSRF
+	Logger     RequestLogger
 }
 
 func NewRouter(d RouterDependencies) http.Handler {
@@ -50,5 +49,5 @@ func NewRouter(d RouterDependencies) http.Handler {
 	var handler http.Handler = mux
 	handler = BootstrapGate(d.Bootstrap, handler)
 	handler = d.CSRF.Wrap(handler)
-	return SecurityMiddleware(d.Logger, d.ExternalTLS, 1<<20, handler)
+	return SecurityMiddleware(d.Logger, 1<<20, handler)
 }

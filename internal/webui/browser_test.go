@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reansnow/trusttunnel-controller/internal/auth"
 	"github.com/reansnow/trusttunnel-controller/internal/clientprofile"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
@@ -55,6 +56,56 @@ func TestBrowserOfflineAssets(t *testing.T) {
 		if strings.Contains(string(logData), host) {
 			t.Fatalf("external CDN request: %s", host)
 		}
+	}
+}
+
+type browserSessionService struct{ webSessionStub }
+
+func (*browserSessionService) Authenticate(_ context.Context, token string) (auth.Admin, error) {
+	if token == "random-session" {
+		return auth.Admin{ID: 1, Username: "admin"}, nil
+	}
+	return auth.Admin{}, auth.ErrInvalidCredentials
+}
+
+func TestBrowserHTTPSBootstrapLogin(t *testing.T) {
+	chrome := os.Getenv("CHROME")
+	if chrome == "" {
+		chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	}
+	if _, err := os.Stat(chrome); err != nil {
+		t.Skip("Chrome is not installed")
+	}
+	bootstrap := &bootstrapServiceStub{required: true}
+	authHandler := NewAuthHandler(&browserSessionService{}, nil)
+	panel := http.NewServeMux()
+	panel.HandleFunc("GET /login", authHandler.Login)
+	panel.HandleFunc("POST /login", authHandler.Login)
+	panel.Handle("GET /session", authHandler.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("authenticated")) })))
+	panel.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("home")) })
+	panelHandler := SecurityMiddleware(nil, 1<<20, NewCSRF(true).Wrap(BootstrapGate(bootstrap, panel)))
+	root := http.NewServeMux()
+	root.Handle("/", panelHandler)
+	root.HandleFunc("GET /browser-flow", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<body data-flow="pending"><script>
+(async()=>{try{
+const form=async(path)=>{const r=await fetch(path);if(!r.ok)throw Error(path+': '+r.status);return new DOMParser().parseFromString(await r.text(),'text/html').querySelector('input[name="_csrf"]').value};
+let token=await form('/bootstrap');let r=await fetch('/bootstrap',{method:'POST',body:new URLSearchParams({_csrf:token,username:'admin',password:'Correct-Horse-9!'})});if(!r.ok)throw Error('bootstrap: '+r.status);
+token=await form('/login');r=await fetch('/login',{method:'POST',body:new URLSearchParams({_csrf:token,username:'admin',password:'Correct-Horse-9!'})});if(!r.ok)throw Error('login: '+r.status);
+r=await fetch('/session');if(!r.ok||await r.text()!=='authenticated')throw Error('session: '+r.status);
+document.body.dataset.flow='passed';
+}catch(e){document.body.dataset.flow='failed';document.body.textContent=String(e)}})();
+</script></body>`))
+	})
+	server := httptest.NewTLSServer(root)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox", "--no-proxy-server", "--ignore-certificate-errors", "--disable-background-networking", "--no-first-run", "--virtual-time-budget=5000", "--user-data-dir="+filepath.Join(t.TempDir(), "profile"), "--dump-dom", server.URL+"/browser-flow")
+	out, err := cmd.CombinedOutput()
+	if !strings.Contains(string(out), `data-flow="passed"`) {
+		t.Fatalf("HTTPS browser bootstrap/login: %v\n%s", err, out)
 	}
 }
 
