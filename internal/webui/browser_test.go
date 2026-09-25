@@ -118,6 +118,11 @@ func TestBrowserConnectionPresets(t *testing.T) {
 		t.Skip("Chrome is not installed")
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /assets/v1/app.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		_, _ = w.Write([]byte("/* previously cached app.js without connection controls */"))
+	})
 	mux.Handle("/assets/v1/", http.StripPrefix("/assets/v1/", AssetHandler()))
 	mux.HandleFunc("/check.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript")
@@ -142,5 +147,28 @@ func TestBrowserConnectionPresets(t *testing.T) {
 	// assertion above proves all three event-driven preset checks actually ran.
 	if err != nil {
 		t.Logf("Chrome rendered and passed assertions but required timeout cleanup: %v", err)
+	}
+}
+
+func TestBrowserDirectDeepLinkAnchor(t *testing.T) {
+	chrome := os.Getenv("CHROME")
+	if chrome == "" {
+		chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	}
+	if _, err := os.Stat(chrome); err != nil {
+		t.Skip("Chrome is not installed")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		r := httptest.NewRequest(http.MethodPost, "/users/1/client/deeplink", nil)
+		r.SetPathValue("id", "1")
+		NewClientConfigHandler(profileExportStub{link: "tt://?AAEB"}).DeepLink(w, r)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox", "--no-proxy-server", "--disable-background-networking", "--no-first-run", "--user-data-dir="+filepath.Join(t.TempDir(), "profile"), "--dump-dom", server.URL)
+	out, err := cmd.CombinedOutput()
+	if !strings.Contains(string(out), `href="tt://?AAEB"`) || strings.Contains(string(out), "<img") {
+		t.Fatalf("browser deeplink DOM: %v\n%s", err, out)
 	}
 }

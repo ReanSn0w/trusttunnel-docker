@@ -60,6 +60,10 @@ the original username/password and explicit external port 443. If a client
 pins the old self-signed or provided certificate, export and reimport the
 profile after rotation; an existing imported profile is not updated remotely.
 
+The browser launch control is a direct `tt://` link and needs an installed
+system handler. Its anchor was checked in the browser without a QR scan; an
+actual mobile app launch was not available in this environment.
+
 The official TLV deeplink supports protocol, Anti-DPI and IPv6, but has no tags
 for TLS profile or post-quantum exchange. More importantly, the inspected
 Flutter application discards `antiDpi` when converting an imported link into

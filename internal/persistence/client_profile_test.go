@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/clientprofile"
 	"path/filepath"
 	"testing"
@@ -27,6 +28,9 @@ func TestClientProfileMigrationFromV3(t *testing.T) {
 	if _, err = db.ExecContext(ctx, `INSERT INTO vpn_users(username,credential,status,created_at,updated_at) VALUES('existing','preserve','active','','')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO tls_certificate(id,state,mode,hostname,active_revision,certificate_path,private_key_path,updated_at) VALUES(1,'manual','manual','vpn.example.com','tls-v3','/data/cert.pem','/data/key.pem','2026-09-24T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +46,10 @@ func TestClientProfileMigrationFromV3(t *testing.T) {
 	u, err := s.UserByID(ctx, 1)
 	if err != nil || u.Credential != "preserve" {
 		t.Fatal("migration lost user")
+	}
+	m, err := s.LoadTLSMetadata(ctx)
+	if err != nil || m.Source != certificate.Provided || m.State != certificate.Active || m.ActiveRevision != "tls-v3" || m.CertificatePath != "/data/cert.pem" || m.PrivateKeyPath != "/data/key.pem" {
+		t.Fatalf("migration lost TLS metadata: %+v err=%v", m, err)
 	}
 }
 

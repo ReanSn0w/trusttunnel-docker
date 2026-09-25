@@ -5,4 +5,4 @@ export CHROME
 GOCACHE="${GOCACHE:-/tmp/trusttunnel-go-build}"
 GOMODCACHE="${GOMODCACHE:-/tmp/trusttunnel-go-mod}"
 export GOCACHE GOMODCACHE
-go test -tags=browser ./internal/webui -run 'TestBrowser(OfflineAssets|HTTPSBootstrapLogin)' -count=1
+go test -tags=browser ./internal/webui -run TestBrowser -count=1
