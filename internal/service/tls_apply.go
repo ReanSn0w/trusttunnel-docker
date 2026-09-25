@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -28,6 +29,10 @@ type ConfigRevisionStore interface {
 }
 type TLSProcess interface{ Reload(context.Context) error }
 type ReadinessCheck func(context.Context) error
+type AdminCertificate interface {
+	Prepare(certificate.Published) (*tls.Certificate, error)
+	Activate(*tls.Certificate)
+}
 
 type TLSCoordinator struct {
 	mu      sync.Mutex
@@ -36,13 +41,18 @@ type TLSCoordinator struct {
 	configs ConfigRevisionStore
 	process TLSProcess
 	ready   ReadinessCheck
+	admin   AdminCertificate
 	pending *tlsPublication
 }
 
 type tlsPublication struct {
 	oldConfig, oldTLS, newConfig, action string
 	activeUser                           bool
+	adminPair                            *tls.Certificate
 }
+
+// SetAdminCertificate attaches the HTTPS listener before certificate work starts.
+func (c *TLSCoordinator) SetAdminCertificate(admin AdminCertificate) { c.admin = admin }
 
 func NewTLSCoordinator(repo TLSRepository, tls TLSRevisionStore, configs ConfigRevisionStore, process TLSProcess, ready ReadinessCheck) *TLSCoordinator {
 	if ready == nil {
@@ -76,6 +86,13 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 			_ = c.restoreTLS(context.Background(), oldTLS)
 		}
 	}()
+	var adminPair *tls.Certificate
+	if c.admin != nil {
+		adminPair, err = c.admin.Prepare(published)
+		if err != nil {
+			return certificate.Published{}, err
+		}
+	}
 	snapshot.TLSCertificatePath, snapshot.TLSPrivateKeyPath = published.CertificatePath, published.PrivateKeyPath
 	files, err := config.Render(snapshot)
 	if err != nil {
@@ -102,7 +119,7 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	}
 	if !activeUser {
 		rollbackTLS = false
-		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "none"}
+		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "none", adminPair: adminPair}
 		return published, nil
 	}
 	if err = c.process.Reload(ctx); err == nil {
@@ -110,7 +127,7 @@ func (c *TLSCoordinator) Publish(ctx context.Context, bundle certificate.Bundle)
 	}
 	if err == nil {
 		rollbackTLS = false
-		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "sighup", activeUser: true}
+		c.pending = &tlsPublication{oldConfig: oldConfig, oldTLS: oldTLS, newConfig: configRevision, action: "sighup", activeUser: true, adminPair: adminPair}
 		return published, nil
 	}
 	primaryErr := err
@@ -172,6 +189,9 @@ func (c *TLSCoordinator) CompletePublished() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.pending != nil {
+		if c.admin != nil {
+			c.admin.Activate(c.pending.adminPair)
+		}
 		_ = c.repo.RecordEvent(context.Background(), domain.ApplyEvent{Revision: c.pending.newConfig, Kind: "tls", Action: c.pending.action, Result: "success"})
 	}
 	c.pending = nil

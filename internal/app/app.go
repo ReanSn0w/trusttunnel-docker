@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -110,7 +111,21 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 	if err != nil {
 		return err
 	}
+	adminCert := &certificate.AdminCertificate{}
+	metadata, err := store.LoadTLSMetadata(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load AdminUI TLS metadata: %w", err)
+	}
+	if err == nil && metadata.ActiveRevision != "" {
+		pair, loadErr := adminCert.Prepare(certificate.Published{Revision: metadata.ActiveRevision, CertificatePath: metadata.CertificatePath, PrivateKeyPath: metadata.PrivateKeyPath})
+		if loadErr != nil {
+			runtimeLog.Logf("AdminUI TLS unavailable: %v", loadErr)
+		} else {
+			adminCert.Activate(pair)
+		}
+	}
 	tlsCoordinator := service.NewTLSCoordinator(store, tlsStore, materializer, readyProc, nil)
+	tlsCoordinator.SetAdminCertificate(adminCert)
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
 	certificateManager.SetApplyLock(applyLock)
@@ -138,17 +153,7 @@ func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 	})
 	probeServer := &http.Server{Addr: cfg.ProbeListen, Handler: probe.New(store, proc, materializer, cfg.Version), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
 	uiServer := &http.Server{Addr: cfg.UIListen, Handler: router, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	uiServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-		active, err := tlsStore.Active()
-		if err != nil {
-			return nil, fmt.Errorf("no active AdminUI TLS certificate: %w", err)
-		}
-		pair, err := tls.LoadX509KeyPair(active.CertificatePath, active.PrivateKeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("load active AdminUI TLS certificate: %w", err)
-		}
-		return &pair, nil
-	}}
+	uiServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: adminCert.GetCertificate}
 	probeListener, err := net.Listen("tcp", cfg.ProbeListen)
 	if err != nil {
 		return fmt.Errorf("probe listener: %w", err)

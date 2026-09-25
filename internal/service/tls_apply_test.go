@@ -39,11 +39,19 @@ func TestTLSCoordinatorCanRevertFirstPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinator := NewTLSCoordinator(repo, tlsStore, files, &reloadStub{}, nil)
+	admin := &certificate.AdminCertificate{}
+	coordinator.SetAdminCertificate(admin)
 	if _, err = coordinator.Publish(ctx, bundle); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = admin.GetCertificate(nil); err == nil {
+		t.Fatal("AdminUI exposed TLS before metadata was confirmed")
+	}
 	if err = coordinator.RevertLast(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if _, err = admin.GetCertificate(nil); err == nil {
+		t.Fatal("AdminUI exposed rolled-back TLS")
 	}
 	events, err := repo.ListApplyEvents(ctx, 0, 10)
 	if err != nil || len(events) != 1 || events[0].Result != "rollback" {
@@ -97,6 +105,8 @@ func TestFirstBackgroundIssueWithoutVPNUsers(t *testing.T) {
 	}
 	process := &reloadStub{firstErr: errors.New("endpoint must not be reloaded before first user")}
 	coordinator := NewTLSCoordinator(repo, tlsStore, files, process, nil)
+	admin := &certificate.AdminCertificate{}
+	coordinator.SetAdminCertificate(admin)
 	bundle, err := certificate.GenerateSelfSigned("vpn.example.net", time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +117,9 @@ func TestFirstBackgroundIssueWithoutVPNUsers(t *testing.T) {
 	got, err := manager.Ensure(ctx, time.Hour)
 	if err != nil || got.State != certificate.Active || got.ActiveRevision == "" || process.calls != 0 {
 		t.Fatalf("first issue=%+v reloads=%d err=%v", got, process.calls, err)
+	}
+	if _, err = admin.GetCertificate(nil); err != nil {
+		t.Fatalf("AdminUI did not activate confirmed certificate: %v", err)
 	}
 	revision, err := repo.ActiveRevision(ctx)
 	if err != nil || revision == "" {
