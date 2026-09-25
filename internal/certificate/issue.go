@@ -71,9 +71,12 @@ func (m *Manager) issue(ctx context.Context, mode Mode, email, hostname string) 
 	}
 	current, err := m.repo.LoadTLSMetadata(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		current = Metadata{State: Unconfigured}
+		current = Metadata{State: Unconfigured, Source: LetsEncrypt}
 	} else if err != nil {
 		return Metadata{}, err
+	}
+	if current.EffectiveSource() != LetsEncrypt {
+		return current, errors.New("ACME issue is disabled for the selected TLS source")
 	}
 	next, err := current.Transition(Issuing)
 	if err != nil {
@@ -141,8 +144,8 @@ func (m *Manager) renew(ctx context.Context) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	if current.Mode == ManualMode {
-		return current, errors.New("ACME renewal is disabled in manual mode")
+	if current.EffectiveSource() != LetsEncrypt {
+		return current, errors.New("ACME renewal is disabled for the selected TLS source")
 	}
 	if err = ValidateIdentity(current.Email, current.Hostname); err != nil {
 		return current, err
@@ -216,6 +219,7 @@ func (m *Manager) ImportManual(ctx context.Context, hostname string, chain, priv
 	}
 	next := current
 	next.State = Manual
+	next.Source = Provided
 	next.Mode = ManualMode
 	next.Hostname = hostname
 	next.Serial = validated.SerialNumber.String()

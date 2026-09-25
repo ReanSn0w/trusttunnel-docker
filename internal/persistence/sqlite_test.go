@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,38 @@ import (
 	"github.com/reansnow/trusttunnel-controller/internal/certificate"
 	"github.com/reansnow/trusttunnel-controller/internal/domain"
 )
+
+func TestMigrationPreservesManualTLSAsProvided(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, migration := range migrations[:4] {
+		if _, err = db.ExecContext(ctx, migration); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.ExecContext(ctx, "INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", i+1, "2026-09-25T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = db.ExecContext(ctx, "INSERT INTO tls_certificate(id,state,mode,hostname,active_revision,certificate_path,private_key_path,updated_at) VALUES(1,'manual','manual','vpn.example.com','r1','/data/cert.pem','/data/key.pem','2026-09-25T00:00:00Z')"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	got, err := store.LoadTLSMetadata(ctx)
+	if err != nil || got.Source != certificate.Provided || got.ActiveRevision != "r1" || got.CertificatePath != "/data/cert.pem" || got.PrivateKeyPath != "/data/key.pem" {
+		t.Fatalf("migrated=%+v err=%v", got, err)
+	}
+}
 
 func TestMigrationsBootstrapAndRepository(t *testing.T) {
 	ctx := context.Background()

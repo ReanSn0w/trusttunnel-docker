@@ -31,7 +31,8 @@ type Logger interface {
 }
 
 type Config struct {
-	TLSHostname, ACMEEmail                                                                    string
+	TLSHostname, ACMEEmail, TLSCertificateFile, TLSKeyFile                                    string
+	TLSSource                                                                                 certificate.Source
 	DataDir, EndpointBinary, EndpointVersion, UIListen, MetricsURL, ProbeListen, HTTP01Listen string
 	StartTimeout, StopTimeout, SessionLifetime, RenewalLead                                   time.Duration
 	Version, Commit                                                                           string
@@ -110,7 +111,7 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	http01 := certificate.NewHTTP01Provider(cfg.HTTP01Listen, 4)
 	certificateManager := certificate.NewManager(store, tlsCoordinator, http01, cfg.DataDir, 2*time.Minute, nil)
 	tlsSettings := service.NewTLSSettingsServiceWithMode(store, certificateManager, cfg.ACMEDefaultMode)
-	if err = seedTLS(ctx, tlsSettings, cfg); err != nil {
+	if err = seedTLS(ctx, tlsSettings, cfg, runtimeLog); err != nil {
 		return err
 	}
 	renewal := certificate.NewAutomaticScheduler(store, func(ctx context.Context) (certificate.Metadata, error) {

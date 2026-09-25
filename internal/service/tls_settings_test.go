@@ -54,3 +54,23 @@ func TestTLSSettingsSaveSeparateFromIssue(t *testing.T) {
 		t.Fatal("invalid identity accepted")
 	}
 }
+
+func TestTLSSettingsSourceIsExplicitAndPersistent(t *testing.T) {
+	ctx := context.Background()
+	repo := &tlsSettingsRepo{empty: true}
+	svc := NewTLSSettingsService(repo, &certOpsStub{})
+	got, err := svc.ConfigureInitial(ctx, certificate.Provided, "vpn.example.net", "", "/run/tls/cert.pem", "/run/tls/key.pem")
+	if err != nil || got.Source != certificate.Provided || got.Mode != certificate.ManualMode {
+		t.Fatalf("configured=%+v err=%v", got, err)
+	}
+	if _, err = svc.Save(ctx, "vpn.example.net", "admin@example.net", certificate.Production); err == nil {
+		t.Fatal("ACME form silently changed the selected source")
+	}
+	if repo.m.Source != certificate.Provided || repo.m.ProvidedKeyPath != "/run/tls/key.pem" {
+		t.Fatalf("persisted=%+v", repo.m)
+	}
+	got, err = svc.SaveConfiguration(ctx, certificate.LetsEncrypt, "vpn.example.net", "admin@example.net", certificate.Staging, "", "")
+	if err != nil || got.Source != certificate.LetsEncrypt || got.Mode != certificate.Staging || got.State != certificate.Unconfigured {
+		t.Fatalf("explicit switch=%+v err=%v", got, err)
+	}
+}

@@ -13,6 +13,9 @@ type TLSService interface {
 	Issue(context.Context) (certificate.Metadata, error)
 	Renew(context.Context) (certificate.Metadata, error)
 }
+type TLSSourceService interface {
+	SaveConfiguration(context.Context, certificate.Source, string, string, certificate.Mode, string, string) (certificate.Metadata, error)
+}
 type TLSHandler struct {
 	service TLSService
 	tmpl    *template.Template
@@ -35,11 +38,17 @@ func (h *TLSHandler) Save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mode := certificate.Mode(r.FormValue("mode"))
-	if _, err := h.service.Save(r.Context(), r.FormValue("hostname"), r.FormValue("email"), mode); err != nil {
+	var err error
+	if configurable, ok := h.service.(TLSSourceService); ok {
+		_, err = configurable.SaveConfiguration(r.Context(), certificate.Source(r.FormValue("source")), r.FormValue("hostname"), r.FormValue("email"), mode, r.FormValue("provided_certificate_path"), r.FormValue("provided_key_path"))
+	} else {
+		_, err = h.service.Save(r.Context(), r.FormValue("hostname"), r.FormValue("email"), mode)
+	}
+	if err != nil {
 		h.render(w, r, err.Error(), "")
 		return
 	}
-	h.render(w, r, "", "Settings saved. Certificate was not issued.")
+	h.render(w, r, "", "Settings saved. Certificate update runs in the background.")
 }
 func (h *TLSHandler) Issue(w http.ResponseWriter, r *http.Request) {
 	if !postOnly(w, r) {

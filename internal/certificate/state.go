@@ -24,10 +24,20 @@ const (
 	ManualMode Mode = "manual"
 )
 
+type Source string
+
+const (
+	LetsEncrypt Source = "letsencrypt"
+	SelfSigned  Source = "self-signed"
+	Provided    Source = "provided"
+)
+
 type Metadata struct {
 	State                                          State
+	Source                                         Source
 	Mode                                           Mode
 	Hostname, Email, DirectoryURL, RegistrationURI string
+	ProvidedCertificatePath, ProvidedKeyPath       string
 	Serial, Issuer                                 string
 	SANs                                           []string
 	NotBefore, NotAfter                            time.Time
@@ -35,6 +45,17 @@ type Metadata struct {
 	CertificatePath, PrivateKeyPath                string
 	LastError                                      string
 	UpdatedAt                                      time.Time
+}
+
+// EffectiveSource keeps records created before the source migration readable.
+func (m Metadata) EffectiveSource() Source {
+	if m.Source != "" {
+		return m.Source
+	}
+	if m.Mode == ManualMode || m.State == Manual {
+		return Provided
+	}
+	return LetsEncrypt
 }
 
 func CanTransition(from, to State) bool {

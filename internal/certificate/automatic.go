@@ -21,7 +21,7 @@ func (m *Manager) Ensure(ctx context.Context, lead time.Duration) (Metadata, err
 	if err != nil {
 		return current, err
 	}
-	if current.Mode == ManualMode || current.Hostname == "" || current.Email == "" {
+	if current.EffectiveSource() != LetsEncrypt || current.Hostname == "" || current.Email == "" {
 		return current, nil
 	}
 	if err = ValidateIdentity(current.Email, current.Hostname); err != nil {
