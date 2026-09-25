@@ -146,7 +146,9 @@ func (s *TLSStore) Restore(revision string) error {
 		if err := os.Remove(current); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		_ = os.Remove(filepath.Join(s.root, "previous"))
+		if err := os.Remove(filepath.Join(s.root, "previous")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 		return syncTLSDir(s.root)
 	}
 	if filepath.Base(revision) != revision || revision == "." || revision == ".." {

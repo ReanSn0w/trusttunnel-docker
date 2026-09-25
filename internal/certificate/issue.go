@@ -213,6 +213,9 @@ func (m *Manager) renew(ctx context.Context) (Metadata, error) {
 	if err != nil {
 		return m.fail(ctx, next, "renew-validate", err)
 	}
+	if current.Fingerprint != "" && fingerprint(validated) == current.Fingerprint {
+		return m.fail(ctx, next, "renew-unchanged", errors.New("ACME returned the active certificate without a later expiry"))
+	}
 	m.lockApply()
 	defer m.unlockApply()
 	published, err := m.publisher.Publish(opCtx, bundle)

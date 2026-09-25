@@ -61,7 +61,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func Run(ctx context.Context, cfg Config, log Logger) error {
+func Run(ctx context.Context, cfg Config, log Logger) (runErr error) {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	if err := cfg.Validate(); err != nil {
@@ -148,6 +148,13 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 		_ = probeListener.Close()
 		return fmt.Errorf("UI listener: %w", err)
 	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.StopTimeout)
+		defer cancel()
+		_ = uiServer.Shutdown(shutdownCtx)
+		_ = probeServer.Shutdown(shutdownCtx)
+		runErr = errors.Join(runErr, proc.Stop(shutdownCtx))
+	}()
 	serverErr := make(chan error, 2)
 	go func() {
 		if serveErr := probeServer.Serve(probeListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
@@ -195,16 +202,10 @@ func Run(ctx context.Context, cfg Config, log Logger) error {
 	select {
 	case <-ctx.Done():
 	case err = <-serverErr:
-		return err
+		runErr = err
 	}
 	runtimeLog.Logf("controller stopping")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.StopTimeout)
-	defer cancel()
-	_ = renewal.Stop(shutdownCtx)
-	_ = http01.Shutdown(shutdownCtx)
-	_ = uiServer.Shutdown(shutdownCtx)
-	_ = probeServer.Shutdown(shutdownCtx)
-	return proc.Stop(shutdownCtx)
+	return runErr
 }
 
 type teeLogger struct {

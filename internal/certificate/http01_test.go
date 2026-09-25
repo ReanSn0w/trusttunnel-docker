@@ -3,6 +3,7 @@ package certificate
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -44,4 +45,20 @@ func TestHTTP01RejectsInvalidToken(t *testing.T) {
 	if err := p.Present(context.Background(), "vpn.example.net", "../token", "secret"); err == nil {
 		t.Fatal("expected invalid token")
 	}
+}
+
+func TestHTTP01ShutdownReleasesListener(t *testing.T) {
+	p := NewHTTP01Provider("127.0.0.1:0", 1)
+	if err := p.Present(context.Background(), "vpn.example.net", "token", "authorization"); err != nil {
+		t.Fatal(err)
+	}
+	address := p.Addr()
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("HTTP-01 port remained occupied: %v", err)
+	}
+	listener.Close()
 }

@@ -19,6 +19,10 @@ import (
 )
 
 func makeBundle(t *testing.T, hostname, issuer string) Bundle {
+	return makeBundleWithLifetime(t, hostname, issuer, 24*time.Hour)
+}
+
+func makeBundleWithLifetime(t *testing.T, hostname, issuer string, lifetime time.Duration) Bundle {
 	t.Helper()
 	now := time.Now().UTC()
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -28,7 +32,7 @@ func makeBundle(t *testing.T, hostname, issuer string) Bundle {
 		t.Fatal(err)
 	}
 	leafKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(lifetime), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, &leafKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)

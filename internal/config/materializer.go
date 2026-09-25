@@ -152,7 +152,9 @@ func (m *Materializer) Restore(revision string) error {
 		if err := os.Remove(current); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		_ = os.Remove(filepath.Join(m.root, "previous"))
+		if err := os.Remove(filepath.Join(m.root, "previous")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 		return syncDir(m.root)
 	}
 	if filepath.Base(revision) != revision || revision == "." || revision == ".." {

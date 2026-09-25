@@ -24,9 +24,10 @@ administrator UI; the official endpoint binary remains the VPN data plane.
 5. Open `/bootstrap` and create a strong administrator password. There are no
    default credentials and the password is not accepted through environment
    variables or logs.
-6. Set `TT_TLS_HOSTNAME` and `TT_ACME_EMAIL` in `.env` before first start to
-   issue the VPN certificate automatically in the background. Alternatively,
-   save them in **TLS** after bootstrap; the background worker picks them up.
+6. Choose `TT_TLS_SOURCE` and `TT_TLS_HOSTNAME` in `.env` before first start.
+   Let's Encrypt also needs `TT_ACME_EMAIL`; see `docs/tls-lifecycle.md` for all
+   three sources. Alternatively, save the source in **TLS** after bootstrap; the
+   background worker picks it up.
    In **Users**, create the first VPN user and copy its generated
    password once. Confirm health/readiness and TCP/UDP listeners before sharing
    the generated official client config.

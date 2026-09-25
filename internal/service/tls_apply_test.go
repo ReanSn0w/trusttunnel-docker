@@ -66,6 +66,54 @@ type tlsRepoStub struct {
 	snapshot domain.Snapshot
 }
 
+type firstIssueACME struct{ bundle certificate.Bundle }
+
+func (c firstIssueACME) EnsureAccount(context.Context) (string, error) { return "registration", nil }
+func (c firstIssueACME) Obtain(context.Context, string) (certificate.Bundle, error) {
+	return c.bundle, nil
+}
+
+func TestFirstBackgroundIssueWithoutVPNUsers(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repo, err := persistence.Open(ctx, filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err = repo.SetHostname(ctx, "vpn.example.net"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.SaveTLSMetadata(ctx, certificate.Metadata{State: certificate.Unconfigured, Source: certificate.LetsEncrypt, Mode: certificate.Staging, Hostname: "vpn.example.net", Email: "admin@example.net"}); err != nil {
+		t.Fatal(err)
+	}
+	tlsStore, err := certificate.NewTLSStore(filepath.Join(root, "tls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := config.NewMaterializer(filepath.Join(root, "config"), func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	process := &reloadStub{firstErr: errors.New("endpoint must not be reloaded before first user")}
+	coordinator := NewTLSCoordinator(repo, tlsStore, files, process, nil)
+	bundle, err := certificate.GenerateSelfSigned("vpn.example.net", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := certificate.NewManager(repo, coordinator, nil, root, time.Second, func(certificate.ACMEConfig) (certificate.ACMEClient, error) {
+		return firstIssueACME{bundle: bundle}, nil
+	})
+	got, err := manager.Ensure(ctx, time.Hour)
+	if err != nil || got.State != certificate.Active || got.ActiveRevision == "" || process.calls != 0 {
+		t.Fatalf("first issue=%+v reloads=%d err=%v", got, process.calls, err)
+	}
+	revision, err := repo.ActiveRevision(ctx)
+	if err != nil || revision == "" {
+		t.Fatalf("config revision=%q err=%v", revision, err)
+	}
+}
+
 func (r *tlsRepoStub) Snapshot(context.Context) (domain.Snapshot, error) { return r.snapshot, nil }
 func (r *tlsRepoStub) ActiveRevision(context.Context) (string, error)    { return r.revision, nil }
 func (r *tlsRepoStub) SetActiveRevision(_ context.Context, v string) error {

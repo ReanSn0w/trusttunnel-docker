@@ -29,7 +29,11 @@ func TestSelfSignedLifecycleKeepsFingerprintUntilRotation(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("private key mode=%v", info.Mode())
 	}
-	again, err := m.Ensure(ctx, 30*24*time.Hour)
+	restarted := NewManager(repo, store, nil, t.TempDir(), time.Second, func(ACMEConfig) (ACMEClient, error) {
+		t.Fatal("restarted self-signed source contacted ACME")
+		return nil, nil
+	})
+	again, err := restarted.Ensure(ctx, 30*24*time.Hour)
 	if err != nil || again.Fingerprint != first.Fingerprint || again.ActiveRevision != first.ActiveRevision {
 		t.Fatalf("unexpected regeneration: %+v err=%v", again, err)
 	}
