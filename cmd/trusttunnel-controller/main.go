@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -60,7 +61,7 @@ func run(args []string) error {
 		}
 	}
 	for _, arg := range args {
-		if arg == "--external-tls" || arg == "--trusted-proxy" || len(arg) > len("--trusted-proxy=") && arg[:len("--trusted-proxy=")] == "--trusted-proxy=" {
+		if arg == "--external-tls" || strings.HasPrefix(arg, "--external-tls=") || arg == "--trusted-proxy" || strings.HasPrefix(arg, "--trusted-proxy=") {
 			return fmt.Errorf("%s is obsolete: use built-in HTTPS on TT_UI_LISTEN; see docs/reverse-proxy.md", arg)
 		}
 	}

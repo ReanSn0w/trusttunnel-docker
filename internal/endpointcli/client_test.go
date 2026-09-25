@@ -19,7 +19,7 @@ func TestEndpointHelper(t *testing.T) {
 	args := os.Args
 	format := args[len(args)-1]
 	if format == "deeplink" {
-		fmt.Print("tt://?safe-test")
+		fmt.Print("tt://?safe-test\n\n[endpoint]\nhostname = \"vpn.example.com\"")
 	} else {
 		fmt.Print("hostname = \"vpn.example.com\"")
 	}
@@ -37,7 +37,7 @@ func TestExportBothOfficialFormats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got.DeepLink, "tt://?") || !strings.Contains(got.TOML, "hostname") {
+	if got.DeepLink != "tt://?safe-test" || !strings.Contains(got.TOML, "hostname") {
 		t.Fatalf("unexpected export: %#v", got)
 	}
 }

@@ -34,13 +34,13 @@ administrator UI; the official endpoint binary remains the VPN data plane.
 
 ## Safe local smoke
 
-The override builds locally, uses a separate volume, defaults ACME to staging,
+The override builds locally, uses a separate volume and a self-signed certificate,
 does not publish TCP 80, and binds every host port to loopback:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.local.yml config
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
-open https://<TT_TLS_HOSTNAME>:18444/bootstrap
+open https://vpn.localhost:18444/bootstrap
 ```
 
 VPN TCP/UDP is available only at `127.0.0.1:18443`. Do not use production DNS,

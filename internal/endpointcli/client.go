@@ -80,7 +80,14 @@ func (c *Client) run(parent context.Context, username, address, format string) (
 	if out.tooLarge {
 		return "", errors.New("endpoint export exceeded output limit")
 	}
-	return strings.TrimSpace(out.String()), nil
+	result := strings.TrimSpace(out.String())
+	if format == "deeplink" {
+		// The official endpoint prints the link, a blank line, then a human-readable
+		// client configuration even with --format deeplink. Only the first line is
+		// the URI consumed by clientprofile.Apply.
+		result = strings.TrimSpace(strings.SplitN(result, "\n", 2)[0])
+	}
+	return result, nil
 }
 
 type limitBuffer struct {

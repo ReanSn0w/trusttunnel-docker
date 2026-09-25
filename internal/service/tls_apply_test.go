@@ -1,10 +1,16 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/pem"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +130,118 @@ func TestFirstBackgroundIssueWithoutVPNUsers(t *testing.T) {
 	revision, err := repo.ActiveRevision(ctx)
 	if err != nil || revision == "" {
 		t.Fatalf("config revision=%q err=%v", revision, err)
+	}
+}
+
+func TestAdminUIAndVPNShareConfirmedCertificateAcrossRenewal(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repo, err := persistence.Open(ctx, filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err = repo.SetHostname(ctx, "vpn.example.net"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.SaveTLSMetadata(ctx, certificate.Metadata{State: certificate.Unconfigured, Source: certificate.LetsEncrypt, Mode: certificate.Staging, Hostname: "vpn.example.net", Email: "admin@example.net"}); err != nil {
+		t.Fatal(err)
+	}
+	tlsStore, err := certificate.NewTLSStore(filepath.Join(root, "tls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs, err := config.NewMaterializer(filepath.Join(root, "config"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := &certificate.AdminCertificate{}
+	coordinator := NewTLSCoordinator(repo, tlsStore, configs, &reloadStub{}, nil)
+	coordinator.SetAdminCertificate(admin)
+	first, err := certificate.GenerateSelfSigned("vpn.example.net", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := certificate.GenerateSelfSigned("vpn.example.net", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundles := []certificate.Bundle{first, second, {Certificate: []byte("invalid")}}
+	manager := certificate.NewManager(repo, coordinator, nil, root, time.Second, func(certificate.ACMEConfig) (certificate.ACMEClient, error) {
+		if len(bundles) == 0 {
+			return nil, errors.New("unexpected ACME order")
+		}
+		bundle := bundles[0]
+		bundles = bundles[1:]
+		return firstIssueACME{bundle: bundle}, nil
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })}
+	server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: admin.GetCertificate}
+	go func() { _ = server.Serve(tls.NewListener(listener, server.TLSConfig)) }()
+	defer server.Close()
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: "vpn.example.net"}}}
+	defer client.CloseIdleConnections()
+	handshake := func() []byte {
+		t.Helper()
+		client.CloseIdleConnections()
+		resp, err := client.Get("https://" + listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent || resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+			t.Fatalf("HTTPS response=%+v", resp)
+		}
+		return resp.TLS.PeerCertificates[0].Raw
+	}
+	assertShared := func() []byte {
+		t.Helper()
+		meta, err := repo.LoadTLSMetadata(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		configDir, err := configs.ActiveDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		hosts, err := os.ReadFile(filepath.Join(configDir, "hosts.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(hosts, []byte("cert_chain_path = "+strconv.Quote(meta.CertificatePath))) || !bytes.Contains(hosts, []byte("private_key_path = "+strconv.Quote(meta.PrivateKeyPath))) {
+			t.Fatalf("VPN paths do not match confirmed revision: %s", hosts)
+		}
+		chain, err := os.ReadFile(meta.CertificatePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, _ := pem.Decode(chain)
+		got := handshake()
+		if block == nil || !bytes.Equal(got, block.Bytes) {
+			t.Fatal("AdminUI handshake and VPN certificate differ")
+		}
+		return got
+	}
+	if _, err = manager.Ensure(ctx, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	old := assertShared()
+	if _, err = manager.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	newCert := assertShared()
+	if bytes.Equal(old, newCert) {
+		t.Fatal("AdminUI did not load renewed certificate")
+	}
+	if _, err = manager.Renew(ctx); err == nil {
+		t.Fatal("invalid renewal was accepted")
+	}
+	if got := assertShared(); !bytes.Equal(got, newCert) {
+		t.Fatal("failed renewal replaced the last confirmed certificate")
 	}
 }
 
